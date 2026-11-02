@@ -47,3 +47,4 @@ A modern, full-featured **Single Studio & Bulk Batch Image Editor** that runs lo
    python server.py
    ```
 2. Or open `index.html` directly in any modern browser.
+

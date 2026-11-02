@@ -140,8 +140,14 @@
               </button>
             </div>
 
-            <!-- Interactive Canvas Tools: Eyedropper, Erase/Restore, Redact Pixelate/Blur, Crop -->
+            <!-- Interactive Canvas Tools: Auto BG, Eyedropper, Erase/Restore, Redact Pixelate/Blur, Crop -->
             <div class="toolbar-group" id="interactiveToolsBar">
+              <button id="quickAutoBgBtn" class="tool-chip chip-accent" title="Automatically detect the foreground object and remove background">
+                ✨ Auto Remove BG
+              </button>
+              <button id="selectObjectToolBtn" class="tool-chip" title="Click directly on any object in the image to detect & isolate it">
+                🎯 Click Object
+              </button>
               <button id="eyedropperToolBtn" class="tool-chip" title="Click on canvas to sample background color to remove">
                 💧 Pick BG
               </button>
@@ -194,6 +200,11 @@
                 </div>
               </div>
 
+              <!-- Detected Object Bounding Box Overlay -->
+              <div id="objectDetectBox" class="object-detect-box hidden">
+                <span id="objectDetectLabel" class="object-detect-label">Object Detected</span>
+              </div>
+
               <!-- Split Slider Handle -->
               <div id="splitHandle" class="split-handle hidden">
                 <div class="split-line"></div>
@@ -202,6 +213,12 @@
 
               <!-- Brush Cursor Preview -->
               <div id="brushCursor" class="brush-cursor hidden"></div>
+            </div>
+
+            <!-- AI / Neural Processing Status Overlay -->
+            <div id="processingOverlay" class="processing-overlay hidden">
+              <div class="spinner"></div>
+              <span id="processingText">Detecting foreground object...</span>
             </div>
           </div>
 
@@ -242,6 +259,9 @@
               <p>All background, color, watermark, dimension, and format settings apply across your entire batch.</p>
             </div>
             <div class="bulk-header-actions">
+              <button id="bulkAutoRemoveBgBtn" class="btn btn-accent" title="Automatically detect objects and remove backgrounds across all images in the batch">
+                ✨ Auto Remove BG (All)
+              </button>
               <button id="processAllBulkBtn" class="btn btn-secondary">
                 ↻ Refresh Previews
               </button>
@@ -346,9 +366,17 @@
 
               <!-- AI Cutout Controls -->
               <div id="aiRemovalControls" class="sub-panel hidden">
+                <div class="field-col">
+                  <label>Object Detection Engine</label>
+                  <select id="aiEngineSelect" class="select-input">
+                    <option value="hybrid">Hybrid Smart Object + Neural AI (Recommended)</option>
+                    <option value="neural">Deep Neural AI (RMBG-1.4 ONNX Model)</option>
+                    <option value="fast">Instant CIE-LAB Salient Object Detector</option>
+                  </select>
+                </div>
                 <div class="slider-row">
                   <div class="slider-header">
-                    <label>Edge Sensitivity</label>
+                    <label>Object Mask Sensitivity</label>
                     <span id="aiSensitivityVal" class="mono">50%</span>
                   </div>
                   <input type="range" id="aiSensitivitySlider" min="10" max="95" value="50" />
@@ -360,8 +388,19 @@
                   </div>
                   <input type="range" id="aiFeatherSlider" min="0" max="15" value="2" />
                 </div>
+                <label class="checkbox-row">
+                  <input type="checkbox" id="cleanupIslandsCheck" checked />
+                  <span>Remove stray background specks & fill object holes</span>
+                </label>
+                <label class="checkbox-row">
+                  <input type="checkbox" id="autoBgOnUploadCheck" />
+                  <span><strong>Auto-remove background on new uploads</strong></span>
+                </label>
+                <div id="detectedObjectInfo" class="detect-info-pill hidden">
+                  🎯 Object Isolated
+                </div>
                 <button id="runAiCutoutBtn" class="btn btn-accent btn-block">
-                  ✨ Run AI Subject Isolation
+                  ✨ Auto Detect Object & Remove BG
                 </button>
               </div>
 

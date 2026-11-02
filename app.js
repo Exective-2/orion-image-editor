@@ -36,8 +36,11 @@
     settings: {
       // 1. Background Removal & Replacement
       bgRemovalMode: 'none', // 'none' | 'ai' | 'color'
+      aiEngine: 'hybrid',    // 'hybrid' | 'neural' | 'fast'
       aiSensitivity: 50,
       aiFeather: 2,
+      cleanupIslands: true,
+      autoBgOnUpload: false,
       chromaColor: '#ffffff',
       chromaTolerance: 22,
       chromaFeather: 12,
@@ -143,6 +146,8 @@
     // Canvas Toolbar
     compareToggleBtn: $('compareToggleBtn'),
     holdOriginalBtn: $('holdOriginalBtn'),
+    quickAutoBgBtn: $('quickAutoBgBtn'),
+    selectObjectToolBtn: $('selectObjectToolBtn'),
     eyedropperToolBtn: $('eyedropperToolBtn'),
     brushEraseBtn: $('brushEraseBtn'),
     brushRestoreBtn: $('brushRestoreBtn'),
@@ -163,6 +168,10 @@
     originalCanvas: $('originalCanvas'),
     cropOverlay: $('cropOverlay'),
     cropSelectionBox: $('cropSelectionBox'),
+    objectDetectBox: $('objectDetectBox'),
+    objectDetectLabel: $('objectDetectLabel'),
+    processingOverlay: $('processingOverlay'),
+    processingText: $('processingText'),
     splitHandle: $('splitHandle'),
     brushCursor: $('brushCursor'),
 
@@ -177,6 +186,7 @@
     footerEstDims: $('footerEstDims'),
 
     // Bulk View
+    bulkAutoRemoveBgBtn: $('bulkAutoRemoveBgBtn'),
     processAllBulkBtn: $('processAllBulkBtn'),
     exportContactSheetBtn: $('exportContactSheetBtn'),
     downloadAllZipBtn: $('downloadAllZipBtn'),
@@ -196,10 +206,14 @@
     bgRemovalModeGroup: $('bgRemovalModeGroup'),
     aiRemovalControls: $('aiRemovalControls'),
     colorRemovalControls: $('colorRemovalControls'),
+    aiEngineSelect: $('aiEngineSelect'),
     aiSensitivitySlider: $('aiSensitivitySlider'),
     aiSensitivityVal: $('aiSensitivityVal'),
     aiFeatherSlider: $('aiFeatherSlider'),
     aiFeatherVal: $('aiFeatherVal'),
+    cleanupIslandsCheck: $('cleanupIslandsCheck'),
+    autoBgOnUploadCheck: $('autoBgOnUploadCheck'),
+    detectedObjectInfo: $('detectedObjectInfo'),
     runAiCutoutBtn: $('runAiCutoutBtn'),
 
     chromaColorInput: $('chromaColorInput'),
@@ -448,6 +462,8 @@
           exifSummary,
           cachedAiAlpha: null,
           cachedAiKey: null,
+          neuralAlphaMap: null,
+          detectedBBox: null,
           lastOutputBlob: null,
           lastOutputWidth: w,
           lastOutputHeight: h
@@ -463,11 +479,17 @@
         state.activeId = state.items[0].id;
         syncDimensionInputsToActiveImage();
       }
-      showToast(
-        addedCount > 1
-          ? `Added ${addedCount} images to queue.`
-          : `Loaded "${state.items[state.items.length - 1].originalFileName}"`
-      );
+      if (state.settings.autoBgOnUpload) {
+        setBgRemovalMode('ai');
+        const active = getActiveItem();
+        if (active) runAutoDetectAndRemoveBg(active);
+      } else {
+        showToast(
+          addedCount > 1
+            ? `Added ${addedCount} images to queue.`
+            : `Loaded "${state.items[state.items.length - 1].originalFileName}"`
+        );
+      }
       updateUIState();
       scheduleRender(true);
     }
@@ -920,7 +942,368 @@
     ctx.putImageData(mainImgData, 0, 0);
   }
 
-  // ==================== SUBJECT ALPHA MASK & AUTO-TRIM ====================
+  // ==================== AUTOMATIC OBJECT DETECTION & BACKGROUND REMOVAL ====================
+
+  /**
+   * Fast RGB -> Perceptual CIE L*a*b* conversion for lighting-invariant object/background separation
+   */
+  function rgbToLab(r, g, b) {
+    let rn = r / 255, gn = g / 255, bn = b / 255;
+    rn = rn > 0.04045 ? Math.pow((rn + 0.055) / 1.055, 2.4) : rn / 12.92;
+    gn = gn > 0.04045 ? Math.pow((gn + 0.055) / 1.055, 2.4) : gn / 12.92;
+    bn = bn > 0.04045 ? Math.pow((bn + 0.055) / 1.055, 2.4) : bn / 12.92;
+
+    let x = (rn * 0.4124 + gn * 0.3576 + bn * 0.1805) / 0.95047;
+    let y = (rn * 0.2126 + gn * 0.7152 + bn * 0.0722) / 1.00000;
+    let z = (rn * 0.0193 + gn * 0.1192 + bn * 0.9505) / 1.08883;
+
+    x = x > 0.008856 ? Math.cbrt(x) : 7.787 * x + 16 / 116;
+    y = y > 0.008856 ? Math.cbrt(y) : 7.787 * y + 16 / 116;
+    z = z > 0.008856 ? Math.cbrt(z) : 7.787 * z + 16 / 116;
+
+    return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
+  }
+
+  /**
+   * Connected-Component Foreground Object Island Cleanup & Interior Hole Filling
+   * Also computes the tight Bounding Box of the detected foreground object(s).
+   */
+  function cleanupObjectMaskAndFindBBox(alpha, w, h, enableCleanup = true) {
+    const total = w * h;
+    if (enableCleanup) {
+      // 1. Keep only significant connected foreground components (removes stray background noise islands)
+      const labels = new Int32Array(total);
+      const compSizes = [0];
+      let nextLabel = 1;
+      const queue = new Int32Array(total);
+
+      for (let i = 0; i < total; i++) {
+        if (alpha[i] > 110 && labels[i] === 0) {
+          const lbl = nextLabel++;
+          let head = 0, tail = 0;
+          queue[tail++] = i;
+          labels[i] = lbl;
+          let count = 0;
+
+          while (head < tail) {
+            const idx = queue[head++];
+            count++;
+            const x = idx % w;
+            const y = (idx - x) / w;
+            if (x > 0 && alpha[idx - 1] > 110 && labels[idx - 1] === 0) { labels[idx - 1] = lbl; queue[tail++] = idx - 1; }
+            if (x < w - 1 && alpha[idx + 1] > 110 && labels[idx + 1] === 0) { labels[idx + 1] = lbl; queue[tail++] = idx + 1; }
+            if (y > 0 && alpha[idx - w] > 110 && labels[idx - w] === 0) { labels[idx - w] = lbl; queue[tail++] = idx - w; }
+            if (y < h - 1 && alpha[idx + w] > 110 && labels[idx + w] === 0) { labels[idx + w] = lbl; queue[tail++] = idx + w; }
+          }
+          compSizes[lbl] = count;
+        }
+      }
+
+      // Find largest foreground object component
+      let maxCompSize = 0;
+      for (let l = 1; l < compSizes.length; l++) {
+        if (compSizes[l] > maxCompSize) maxCompSize = compSizes[l];
+      }
+
+      // Remove tiny disconnected background specks (< 1.5% of main object size)
+      const minKeepSize = Math.max(24, Math.round(maxCompSize * 0.015));
+      for (let i = 0; i < total; i++) {
+        const lbl = labels[i];
+        if (lbl > 0 && compSizes[lbl] < minKeepSize) {
+          alpha[i] = 0;
+        }
+      }
+
+      // 2. Fill small interior holes trapped inside the foreground object
+      const extBg = new Uint8Array(total);
+      let head = 0, tail = 0;
+      function seedBg(idx) {
+        if (alpha[idx] <= 110 && extBg[idx] === 0) {
+          extBg[idx] = 1;
+          queue[tail++] = idx;
+        }
+      }
+      for (let x = 0; x < w; x++) { seedBg(x); seedBg((h - 1) * w + x); }
+      for (let y = 0; y < h; y++) { seedBg(y * w); seedBg(y * w + (w - 1)); }
+
+      while (head < tail) {
+        const idx = queue[head++];
+        const x = idx % w;
+        const y = (idx - x) / w;
+        if (x > 0) seedBg(idx - 1);
+        if (x < w - 1) seedBg(idx + 1);
+        if (y > 0) seedBg(idx - w);
+        if (y < h - 1) seedBg(idx + w);
+      }
+
+      // Any unreached transparent pocket is an interior hole -> restore if small/enclosed
+      for (let i = 0; i < total; i++) {
+        if (alpha[i] <= 110 && extBg[i] === 0) {
+          alpha[i] = 255;
+        }
+      }
+    }
+
+    // 3. Compute Detected Object Bounding Box
+    let minX = w, minY = h, maxX = 0, maxY = 0, fgCount = 0;
+    for (let y = 0; y < h; y++) {
+      const rowOff = y * w;
+      for (let x = 0; x < w; x++) {
+        if (alpha[rowOff + x] > 128) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+          fgCount++;
+        }
+      }
+    }
+
+    if (fgCount === 0) {
+      return { minX: 0, minY: 0, maxX: w - 1, maxY: h - 1, width: w, height: h, coveragePct: 100 };
+    }
+    return {
+      minX,
+      minY,
+      maxX,
+      maxY,
+      width: maxX - minX + 1,
+      height: maxY - minY + 1,
+      coveragePct: Math.round((fgCount / total) * 100)
+    };
+  }
+
+  /**
+   * Displays the animated green Object Detection Bounding Box on the Single Studio canvas
+   */
+  let detectBoxTimer = null;
+  function flashDetectedObjectBox(item) {
+    if (!item || !item.detectedBBox || state.mode !== 'single') return;
+    const b = item.detectedBBox;
+    const leftPct = (b.minX / item.width) * 100;
+    const topPct = (b.minY / item.height) * 100;
+    const widthPct = (b.width / item.width) * 100;
+    const heightPct = (b.height / item.height) * 100;
+
+    el.objectDetectBox.style.left = `${leftPct}%`;
+    el.objectDetectBox.style.top = `${topPct}%`;
+    el.objectDetectBox.style.width = `${widthPct}%`;
+    el.objectDetectBox.style.height = `${heightPct}%`;
+    el.objectDetectLabel.textContent = `🎯 Object Detected (${b.width}×${b.height} px • ${b.coveragePct}% area)`;
+    el.objectDetectBox.classList.remove('hidden');
+    el.objectDetectBox.style.opacity = '1';
+
+    el.detectedObjectInfo.textContent = `🎯 Isolated Object: ${b.width}×${b.height} px (${b.coveragePct}% fg)`;
+    el.detectedObjectInfo.classList.remove('hidden');
+
+    if (detectBoxTimer) clearTimeout(detectBoxTimer);
+    detectBoxTimer = setTimeout(() => {
+      el.objectDetectBox.style.opacity = '0';
+      setTimeout(() => el.objectDetectBox.classList.add('hidden'), 350);
+    }, 2100);
+  }
+
+  /**
+   * Deep Neural AI Object Segmentation (RMBG-1.4 via @huggingface/transformers ONNX in browser)
+   */
+  let neuralModelPromise = null;
+  async function runNeuralObjectDetection(item) {
+    if (item.neuralAlphaMap) return item.neuralAlphaMap;
+
+    try {
+      el.processingOverlay.classList.remove('hidden');
+      el.processingText.textContent = 'Loading Neural Object Detector (RMBG-1.4)...';
+
+      if (!neuralModelPromise) {
+        neuralModelPromise = (async () => {
+          const { AutoModel, AutoProcessor, RawImage } = await import(
+            'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.1.2'
+          );
+          const model = await AutoModel.from_pretrained('briaai/RMBG-1.4', {
+            config: { model_type: 'custom' }
+          });
+          const processor = await AutoProcessor.from_pretrained('briaai/RMBG-1.4', {
+            config: {
+              do_normalize: true,
+              do_pad: false,
+              do_rescale: true,
+              do_resize: true,
+              image_mean: [0.5, 0.5, 0.5],
+              feature_extractor_type: 'ImageFeatureExtractor',
+              image_std: [1, 1, 1],
+              resample: 2,
+              rescale_factor: 0.00392156862745098,
+              size: { width: 1024, height: 1024 }
+            }
+          });
+          return { model, processor, RawImage };
+        })();
+      }
+
+      const { model, processor, RawImage } = await neuralModelPromise;
+      el.processingText.textContent = `Detecting foreground object in "${item.originalFileName}"...`;
+
+      // Convert item image to dataURL for RawImage
+      const c = document.createElement('canvas');
+      c.width = item.width;
+      c.height = item.height;
+      c.getContext('2d').drawImage(item.imgElement, 0, 0);
+      const rawImg = await RawImage.fromURL(c.toDataURL('image/png'));
+
+      const { pixel_values } = await processor(rawImg);
+      const { output } = await model({ input: pixel_values });
+
+      const maskImage = await RawImage.fromTensor(output[0].mul(255).to('uint8')).resize(
+        item.width,
+        item.height
+      );
+
+      const neuralAlpha = new Uint8ClampedArray(item.width * item.height);
+      const maskData = maskImage.data;
+      for (let i = 0; i < neuralAlpha.length; i++) {
+        neuralAlpha[i] = maskData[i];
+      }
+
+      item.neuralAlphaMap = neuralAlpha;
+      item.cachedAiKey = null;
+      el.processingOverlay.classList.add('hidden');
+      return neuralAlpha;
+    } catch (err) {
+      console.warn('Neural ONNX fallback to CIE-LAB Salient Object Detector:', err);
+      el.processingOverlay.classList.add('hidden');
+      return null;
+    }
+  }
+
+  /**
+   * High-Speed Perceptual CIE-LAB + Sobel Edge Barrier + Saliency Object Detector
+   */
+  function detectSalientObjectFast(item, d, w, h) {
+    const totalPixels = w * h;
+    const alpha = new Uint8ClampedArray(totalPixels);
+    for (let i = 0; i < totalPixels; i++) alpha[i] = d[i * 4 + 3];
+
+    // 1. Sample outer border strips (top, bottom, left, right) in perceptual CIE-LAB space
+    const borderSamples = [];
+    const stepX = Math.max(1, Math.floor(w / 48));
+    const stepY = Math.max(1, Math.floor(h / 48));
+    const marginX = Math.max(1, Math.min(8, Math.floor(w * 0.02)));
+    const marginY = Math.max(1, Math.min(8, Math.floor(h * 0.02)));
+
+    for (let x = 0; x < w; x += stepX) {
+      const pTop = (marginY * w + x) * 4;
+      const pBot = ((h - 1 - marginY) * w + x) * 4;
+      borderSamples.push(rgbToLab(d[pTop], d[pTop + 1], d[pTop + 2]));
+      borderSamples.push(rgbToLab(d[pBot], d[pBot + 1], d[pBot + 2]));
+    }
+    for (let y = 0; y < h; y += stepY) {
+      const pLeft = (y * w + marginX) * 4;
+      const pRight = (y * w + (w - 1 - marginX)) * 4;
+      borderSamples.push(rgbToLab(d[pLeft], d[pLeft + 1], d[pLeft + 2]));
+      borderSamples.push(rgbToLab(d[pRight], d[pRight + 1], d[pRight + 2]));
+    }
+
+    // Cluster border LAB colors into up to 6 background centroids
+    const centroids = [];
+    for (const lab of borderSamples) {
+      let matched = false;
+      for (const c of centroids) {
+        const dist = Math.hypot(lab[0] - c.l, lab[1] - c.a, lab[2] - c.b);
+        if (dist < 18) {
+          c.l = (c.l * c.count + lab[0]) / (c.count + 1);
+          c.a = (c.a * c.count + lab[1]) / (c.count + 1);
+          c.b = (c.b * c.count + lab[2]) / (c.count + 1);
+          c.count++;
+          matched = true;
+          break;
+        }
+      }
+      if (!matched && centroids.length < 6) {
+        centroids.push({ l: lab[0], a: lab[1], b: lab[2], count: 1 });
+      }
+    }
+
+    const sens = state.settings.aiSensitivity; // 10..95
+    // Perceptual Delta-E threshold in LAB space
+    const baseDeltaE = 10 + (sens / 100) * 46;
+
+    function minLabDistToBg(r, g, b) {
+      const [l, a, bb] = rgbToLab(r, g, b);
+      let minD = 999;
+      for (const c of centroids) {
+        // Weight chromaticity (a, b) slightly higher than luminance (L) so cast shadows on studio floors are removed too!
+        const dl = (l - c.l) * 0.72;
+        const da = (a - c.a) * 1.15;
+        const db = (bb - c.b) * 1.15;
+        const dist = Math.hypot(dl, da, db);
+        if (dist < minD) minD = dist;
+      }
+      return minD;
+    }
+
+    // 2. Edge-aware border flood-fill with local gradient barrier
+    const visited = new Uint8Array(totalPixels);
+    const bgProb = new Float32Array(totalPixels);
+    const queue = new Int32Array(totalPixels);
+    let head = 0, tail = 0;
+
+    function seed(x, y) {
+      const idx = y * w + x;
+      if (!visited[idx]) { visited[idx] = 1; queue[tail++] = idx; }
+    }
+    for (let x = 0; x < w; x++) { seed(x, 0); seed(x, h - 1); }
+    for (let y = 0; y < h; y++) { seed(0, y); seed(w - 1, y); }
+
+    const stepEdgeLimit = 22 + (sens / 100) * 28;
+
+    while (head < tail) {
+      const idx = queue[head++];
+      const p = idx * 4;
+      const r = d[p], g = d[p + 1], b = d[p + 2];
+      const distBg = minLabDistToBg(r, g, b);
+
+      if (distBg <= baseDeltaE) {
+        bgProb[idx] = Math.max(0.05, 1 - (distBg / baseDeltaE) * 0.4);
+        const x = idx % w;
+        const y = (idx - x) / w;
+        const neighbors = [];
+        if (x > 0) neighbors.push(idx - 1);
+        if (x < w - 1) neighbors.push(idx + 1);
+        if (y > 0) neighbors.push(idx - w);
+        if (y < h - 1) neighbors.push(idx + w);
+
+        for (const nIdx of neighbors) {
+          if (!visited[nIdx]) {
+            const np = nIdx * 4;
+            const stepDiff = Math.hypot(r - d[np], g - d[np + 1], b - d[np + 2]);
+            if (stepDiff < stepEdgeLimit) {
+              visited[nIdx] = 1;
+              queue[tail++] = nIdx;
+            }
+          }
+        }
+      }
+    }
+
+    for (let i = 0; i < totalPixels; i++) {
+      if (bgProb[i] > 0) {
+        const p = i * 4;
+        const distBg = minLabDistToBg(d[p], d[p + 1], d[p + 2]);
+        if (distBg < baseDeltaE * 0.76) {
+          alpha[i] = 0;
+        } else {
+          const t = Math.min(1, (distBg - baseDeltaE * 0.76) / (baseDeltaE * 0.3));
+          alpha[i] = Math.round(alpha[i] * t);
+        }
+      }
+    }
+
+    return alpha;
+  }
+
+  /**
+   * Main Subject Alpha Mask Computer (combines Neural AI, Fast LAB Saliency, Chroma Key, Island Cleanup & Manual Brush)
+   */
   function computeSubjectAlphaMask(item, srcData) {
     const w = item.width;
     const h = item.height;
@@ -987,109 +1370,38 @@
           else if (dist < tol + feather) alpha[i] = Math.round(alpha[i] * ((dist - tol) / feather));
         }
       }
+      item.detectedBBox = cleanupObjectMaskAndFindBBox(alpha, w, h, false);
     } else if (mode === 'ai') {
-      const cacheKey = `${state.settings.aiSensitivity}_${state.settings.aiFeather}`;
+      const cacheKey = `${state.settings.aiEngine}_${state.settings.aiSensitivity}_${state.settings.aiFeather}_${state.settings.cleanupIslands}_${Boolean(item.neuralAlphaMap)}`;
       if (item.cachedAiAlpha && item.cachedAiKey === cacheKey) {
         alpha.set(item.cachedAiAlpha);
       } else {
-        const borderSamples = [];
-        const stepX = Math.max(1, Math.floor(w / 40));
-        const stepY = Math.max(1, Math.floor(h / 40));
-
-        for (let x = 0; x < w; x += stepX) {
-          const pTop = x * 4;
-          const pBot = ((h - 1) * w + x) * 4;
-          borderSamples.push([d[pTop], d[pTop + 1], d[pTop + 2]]);
-          borderSamples.push([d[pBot], d[pBot + 1], d[pBot + 2]]);
-        }
-        for (let y = 0; y < h; y += stepY) {
-          const pLeft = y * w * 4;
-          const pRight = (y * w + (w - 1)) * 4;
-          borderSamples.push([d[pLeft], d[pLeft + 1], d[pLeft + 2]]);
-          borderSamples.push([d[pRight], d[pRight + 1], d[pRight + 2]]);
-        }
-
-        const centroids = [];
-        for (const s of borderSamples) {
-          let matched = false;
-          for (const c of centroids) {
-            if (Math.hypot(s[0] - c.r, s[1] - c.g, s[2] - c.b) < 38) {
-              c.r = (c.r * c.count + s[0]) / (c.count + 1);
-              c.g = (c.g * c.count + s[1]) / (c.count + 1);
-              c.b = (c.b * c.count + s[2]) / (c.count + 1);
-              c.count++;
-              matched = true;
-              break;
-            }
+        // Use Deep Neural Alpha Map if computed and engine is 'neural' or 'hybrid'
+        if (item.neuralAlphaMap && state.settings.aiEngine !== 'fast') {
+          const threshOffset = ((50 - state.settings.aiSensitivity) / 50) * 65;
+          for (let i = 0; i < totalPixels; i++) {
+            const v = item.neuralAlphaMap[i] - threshOffset;
+            alpha[i] = Math.max(0, Math.min(255, Math.round(v)));
           }
-          if (!matched && centroids.length < 5) {
-            centroids.push({ r: s[0], g: s[1], b: s[2], count: 1 });
-          }
+        } else {
+          // Run Perceptual CIE-LAB Salient Object Detector
+          const fastAlpha = detectSalientObjectFast(item, d, w, h);
+          alpha.set(fastAlpha);
         }
 
-        const baseThresh = 18 + (state.settings.aiSensitivity / 100) * 95;
-        function minDistToBg(r, g, b) {
-          let minD = 999;
-          for (const c of centroids) {
-            const dist = Math.hypot(r - c.r, g - c.g, b - c.b);
-            if (dist < minD) minD = dist;
-          }
-          return minD;
-        }
+        // Connected-Component Island Cleanup & Interior Hole Filling + Bounding Box
+        item.detectedBBox = cleanupObjectMaskAndFindBBox(
+          alpha,
+          w,
+          h,
+          state.settings.cleanupIslands
+        );
 
-        const visited = new Uint8Array(totalPixels);
-        const bgProb = new Float32Array(totalPixels);
-        const queue = new Int32Array(totalPixels);
-        let head = 0, tail = 0;
-
-        function seed(x, y) {
-          const idx = y * w + x;
-          if (!visited[idx]) { visited[idx] = 1; queue[tail++] = idx; }
-        }
-        for (let x = 0; x < w; x++) { seed(x, 0); seed(x, h - 1); }
-        for (let y = 0; y < h; y++) { seed(0, y); seed(w - 1, y); }
-
-        while (head < tail) {
-          const idx = queue[head++];
-          const p = idx * 4;
-          const r = d[p], g = d[p + 1], b = d[p + 2];
-          const distBg = minDistToBg(r, g, b);
-          if (distBg <= baseThresh) {
-            bgProb[idx] = Math.max(0, 1 - (distBg / baseThresh) * 0.35);
-            const x = idx % w;
-            const y = (idx - x) / w;
-            const neighbors = [];
-            if (x > 0) neighbors.push(idx - 1);
-            if (x < w - 1) neighbors.push(idx + 1);
-            if (y > 0) neighbors.push(idx - w);
-            if (y < h - 1) neighbors.push(idx + w);
-            for (const nIdx of neighbors) {
-              if (!visited[nIdx]) {
-                const np = nIdx * 4;
-                if (Math.hypot(r - d[np], g - d[np + 1], b - d[np + 2]) < 42) {
-                  visited[nIdx] = 1;
-                  queue[tail++] = nIdx;
-                }
-              }
-            }
-          }
-        }
-
-        for (let i = 0; i < totalPixels; i++) {
-          if (bgProb[i] > 0) {
-            const p = i * 4;
-            const distBg = minDistToBg(d[p], d[p + 1], d[p + 2]);
-            if (distBg < baseThresh * 0.72) alpha[i] = 0;
-            else {
-              const t = Math.min(1, (distBg - baseThresh * 0.72) / (baseThresh * 0.35));
-              alpha[i] = Math.round(alpha[i] * t);
-            }
-          }
-        }
-
+        // Edge Feather / Smoothness
         if (state.settings.aiFeather > 0) {
           boxBlurAlpha(alpha, w, h, state.settings.aiFeather);
         }
+
         item.cachedAiAlpha = new Uint8ClampedArray(alpha);
         item.cachedAiKey = cacheKey;
       }
@@ -1104,6 +1416,154 @@
     }
 
     return alpha;
+  }
+
+  /**
+   * 1-Click Automatic Object Detection & Background Removal Runner (Single & Bulk)
+   */
+  async function runAutoDetectAndRemoveBg(targetItem) {
+    const item = targetItem || getActiveItem();
+    if (!item) {
+      showToast('Please add an image first.');
+      return;
+    }
+
+    setBgRemovalMode('ai');
+    item.cachedAiKey = null;
+
+    // 1. Run instant CIE-LAB salient object detection immediately for instant visual feedback
+    scheduleRender(true);
+    flashDetectedObjectBox(item);
+
+    // 2. If engine is 'neural' or 'hybrid', also run Deep Neural RMBG-1.4 segmentation
+    if (state.settings.aiEngine === 'neural' || state.settings.aiEngine === 'hybrid') {
+      const neuralAlpha = await runNeuralObjectDetection(item);
+      if (neuralAlpha) {
+        item.cachedAiKey = null;
+        scheduleRender(true);
+        flashDetectedObjectBox(item);
+        showToast(`Neural AI isolated object (${item.detectedBBox ? item.detectedBBox.width + '×' + item.detectedBBox.height + ' px' : 'complete'})!`);
+        return;
+      }
+    }
+
+    showToast(
+      `Object isolated (${item.detectedBBox ? item.detectedBBox.width + '×' + item.detectedBBox.height + ' px' : 'complete'})!`
+    );
+  }
+
+  async function runBulkAutoRemoveBg() {
+    if (state.items.length === 0) {
+      showToast('Add images to the batch first.');
+      return;
+    }
+    setBgRemovalMode('ai');
+    el.bulkProgressContainer.classList.remove('hidden');
+
+    for (let i = 0; i < state.items.length; i++) {
+      const it = state.items[i];
+      const pct = Math.round(((i + 1) / state.items.length) * 100);
+      el.bulkProgressLabel.textContent = `Auto-detecting object ${i + 1} of ${state.items.length}: ${it.originalFileName}...`;
+      el.bulkProgressPercent.textContent = `${pct}%`;
+      el.bulkProgressBar.style.width = `${pct}%`;
+
+      it.cachedAiKey = null;
+      if (state.settings.aiEngine === 'neural') {
+        await runNeuralObjectDetection(it);
+      }
+    }
+
+    await renderBulkGrid();
+    setTimeout(() => el.bulkProgressContainer.classList.add('hidden'), 800);
+    showToast(`Automatically isolated objects & removed backgrounds across ${state.items.length} images!`);
+  }
+
+  /**
+   * Interactive "🎯 Click Object" Smart Object Isolator
+   * Click any specific object on the canvas to segment & keep that contiguous object and remove everything else!
+   */
+  function isolateClickedObjectAtEvent(e) {
+    const item = getActiveItem();
+    if (!item) return;
+
+    const rect = el.previewCanvas.getBoundingClientRect();
+    const u = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const v = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    const seedX = Math.min(item.width - 1, Math.floor(u * item.width));
+    const seedY = Math.min(item.height - 1, Math.floor(v * item.height));
+
+    const temp = document.createElement('canvas');
+    temp.width = item.width;
+    temp.height = item.height;
+    const tCtx = temp.getContext('2d');
+    tCtx.drawImage(item.imgElement, 0, 0);
+    const d = tCtx.getImageData(0, 0, item.width, item.height).data;
+
+    const w = item.width, h = item.height;
+    const total = w * h;
+    const seedIdx = seedY * w + seedX;
+    const seedLab = rgbToLab(d[seedIdx * 4], d[seedIdx * 4 + 1], d[seedIdx * 4 + 2]);
+
+    // Region-growing from clicked seed point with adaptive LAB + local step threshold
+    const visited = new Uint8Array(total);
+    const objMask = new Uint8Array(total);
+    const queue = new Int32Array(total);
+    let head = 0, tail = 0;
+
+    visited[seedIdx] = 1;
+    queue[tail++] = seedIdx;
+
+    const maxSeedDeltaE = 36 + (state.settings.aiSensitivity / 100) * 55;
+    const maxStepRGB = 28 + (state.settings.aiSensitivity / 100) * 32;
+
+    while (head < tail) {
+      const idx = queue[head++];
+      objMask[idx] = 1;
+      const p = idx * 4;
+      const r = d[p], g = d[p + 1], b = d[p + 2];
+
+      const x = idx % w;
+      const y = (idx - x) / w;
+      const neighbors = [];
+      if (x > 0) neighbors.push(idx - 1);
+      if (x < w - 1) neighbors.push(idx + 1);
+      if (y > 0) neighbors.push(idx - w);
+      if (y < h - 1) neighbors.push(idx + w);
+
+      for (const nIdx of neighbors) {
+        if (!visited[nIdx]) {
+          const np = nIdx * 4;
+          const stepDiff = Math.hypot(r - d[np], g - d[np + 1], b - d[np + 2]);
+          if (stepDiff <= maxStepRGB) {
+            const nLab = rgbToLab(d[np], d[np + 1], d[np + 2]);
+            const seedDiff = Math.hypot(nLab[0] - seedLab[0], nLab[1] - seedLab[1], nLab[2] - seedLab[2]);
+            if (seedDiff <= maxSeedDeltaE) {
+              visited[nIdx] = 1;
+              queue[tail++] = nIdx;
+            }
+          }
+        }
+      }
+    }
+
+    // Write isolated object into item.brushMask so it combines with manual brush tools
+    for (let i = 0; i < total; i++) {
+      item.brushMask[i] = objMask[i] ? 255 : 0;
+    }
+    item.hasManualBrush = true;
+    setBgRemovalMode('ai');
+
+    const alphaPreview = new Uint8ClampedArray(total);
+    for (let i = 0; i < total; i++) alphaPreview[i] = objMask[i] ? 255 : 0;
+    item.detectedBBox = cleanupObjectMaskAndFindBBox(alphaPreview, w, h, true);
+    for (let i = 0; i < total; i++) {
+      item.brushMask[i] = alphaPreview[i] > 128 ? 255 : 0;
+    }
+
+    setActiveTool(null);
+    scheduleRender(true);
+    flashDetectedObjectBox(item);
+    showToast(`Isolated clicked object (${item.detectedBBox.width}×${item.detectedBBox.height} px)!`);
   }
 
   function boxBlurAlpha(alpha, w, h, radius) {
@@ -2307,6 +2767,7 @@
   // ==================== INTERACTIVE CANVAS TOOLS ====================
   function setActiveTool(tool) {
     state.activeTool = state.activeTool === tool ? null : tool;
+    el.selectObjectToolBtn.classList.toggle('active', state.activeTool === 'selectObject');
     el.eyedropperToolBtn.classList.toggle('active', state.activeTool === 'eyedropper');
     el.brushEraseBtn.classList.toggle('active', state.activeTool === 'erase');
     el.brushRestoreBtn.classList.toggle('active', state.activeTool === 'restore');
@@ -2317,7 +2778,11 @@
     el.brushSizeControl.classList.toggle('hidden', !isBrush);
     el.brushCursor.classList.toggle('hidden', !isBrush);
     el.previewCanvas.style.cursor =
-      state.activeTool === 'eyedropper' ? 'crosshair' : isBrush ? 'none' : 'default';
+      state.activeTool === 'eyedropper' || state.activeTool === 'selectObject'
+        ? 'crosshair'
+        : isBrush
+          ? 'none'
+          : 'default';
   }
 
   function sampleColorFromCanvasEvent(e) {
@@ -2516,8 +2981,19 @@
     el.bgRemovalModeGroup.querySelectorAll('.seg-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
         setBgRemovalMode(btn.dataset.bgMode);
-        scheduleRender(true);
+        if (btn.dataset.bgMode === 'ai') {
+          runAutoDetectAndRemoveBg();
+        } else {
+          scheduleRender(true);
+        }
       });
+    });
+
+    el.aiEngineSelect.addEventListener('change', (e) => {
+      state.settings.aiEngine = e.target.value;
+      const item = getActiveItem();
+      if (item) item.cachedAiKey = null;
+      runAutoDetectAndRemoveBg();
     });
 
     el.aiSensitivitySlider.addEventListener('input', (e) => {
@@ -2530,12 +3006,24 @@
       el.aiFeatherVal.textContent = `${state.settings.aiFeather} px`;
       scheduleRender();
     });
-    el.runAiCutoutBtn.addEventListener('click', () => {
-      const item = getActiveItem();
-      if (item) item.cachedAiKey = null;
-      setBgRemovalMode('ai');
+    el.cleanupIslandsCheck.addEventListener('change', (e) => {
+      state.settings.cleanupIslands = e.target.checked;
       scheduleRender(true);
-      showToast('AI Subject Isolation updated!');
+    });
+    el.autoBgOnUploadCheck.addEventListener('change', (e) => {
+      state.settings.autoBgOnUpload = e.target.checked;
+      if (e.target.checked) {
+        showToast('Auto-Remove Background on Upload enabled!');
+      }
+    });
+    el.runAiCutoutBtn.addEventListener('click', () => {
+      runAutoDetectAndRemoveBg();
+    });
+    el.quickAutoBgBtn.addEventListener('click', () => {
+      runAutoDetectAndRemoveBg();
+    });
+    el.bulkAutoRemoveBgBtn.addEventListener('click', () => {
+      runBulkAutoRemoveBg();
     });
 
     el.chromaColorInput.addEventListener('input', (e) => {
@@ -3072,6 +3560,12 @@
       draggingSplit = false;
     });
 
+    el.selectObjectToolBtn.addEventListener('click', () => {
+      setActiveTool('selectObject');
+      if (state.activeTool === 'selectObject') {
+        showToast('🎯 Click directly on any object in the image to detect & isolate it');
+      }
+    });
     el.eyedropperToolBtn.addEventListener('click', () => setActiveTool('eyedropper'));
     el.brushEraseBtn.addEventListener('click', () => setActiveTool('erase'));
     el.brushRestoreBtn.addEventListener('click', () => setActiveTool('restore'));
@@ -3095,6 +3589,10 @@
 
     let painting = false;
     el.previewCanvas.addEventListener('mousedown', (e) => {
+      if (state.activeTool === 'selectObject') {
+        isolateClickedObjectAtEvent(e);
+        return;
+      }
       if (state.activeTool === 'eyedropper') {
         sampleColorFromCanvasEvent(e);
         return;
