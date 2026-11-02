@@ -1153,15 +1153,70 @@
       const { pixel_values } = await processor(rawImg);
       const { output } = await model({ input: pixel_values });
 
-      const maskImage = await RawImage.fromTensor(output[0].mul(255).to('uint8')).resize(
-        item.width,
-        item.height
-      );
+      // Safely extract 2D mask from 3D [1, H, W] or 4D [1, 1, H, W] tensor
+      const tensor = output[0];
+      const floatData = tensor.data;
+      const dims = tensor.dims || [1, 1, 1024, 1024];
+      const mh = dims[dims.length - 2] || 1024;
+      const mw = dims[dims.length - 1] || 1024;
+      const maskLen = mw * mh;
+
+      let minV = Infinity;
+      let maxV = -Infinity;
+      for (let i = 0; i < maskLen; i++) {
+        const v = floatData[i];
+        if (v < minV) minV = v;
+        if (v > maxV) maxV = v;
+      }
+      const range = maxV - minV || 1;
+
+      const maskCanvas = document.createElement('canvas');
+      maskCanvas.width = mw;
+      maskCanvas.height = mh;
+      const mCtx = maskCanvas.getContext('2d');
+      const mImgData = mCtx.createImageData(mw, mh);
+      const md = mImgData.data;
+      for (let i = 0; i < maskLen; i++) {
+        const norm = Math.max(0, Math.min(255, Math.round(((floatData[i] - minV) / range) * 255)));
+        const p = i * 4;
+        md[p] = norm;
+        md[p + 1] = norm;
+        md[p + 2] = norm;
+        md[p + 3] = 255;
+      }
+      mCtx.putImageData(mImgData, 0, 0);
+
+      // Resize mask to exact image dimensions
+      const resizedCanvas = document.createElement('canvas');
+      resizedCanvas.width = item.width;
+      resizedCanvas.height = item.height;
+      const rCtx = resizedCanvas.getContext('2d');
+      rCtx.imageSmoothingEnabled = true;
+      rCtx.imageSmoothingQuality = 'high';
+      rCtx.drawImage(maskCanvas, 0, 0, item.width, item.height);
+      const resizedData = rCtx.getImageData(0, 0, item.width, item.height).data;
 
       const neuralAlpha = new Uint8ClampedArray(item.width * item.height);
-      const maskData = maskImage.data;
       for (let i = 0; i < neuralAlpha.length; i++) {
-        neuralAlpha[i] = maskData[i];
+        neuralAlpha[i] = resizedData[i * 4];
+      }
+
+      // Sanity check: verify central main object was NOT erased
+      let centerFg = 0;
+      let centerTotal = 0;
+      const x0 = Math.floor(item.width * 0.25), x1 = Math.ceil(item.width * 0.75);
+      const y0 = Math.floor(item.height * 0.25), y1 = Math.ceil(item.height * 0.75);
+      for (let y = y0; y < y1; y++) {
+        const ro = y * item.width;
+        for (let x = x0; x < x1; x++) {
+          centerTotal++;
+          if (neuralAlpha[ro + x] > 120) centerFg++;
+        }
+      }
+      if (centerTotal > 0 && centerFg / centerTotal < 0.08) {
+        console.warn('Neural mask had <8% central foreground; using edge-barrier salient detector.');
+        el.processingOverlay.classList.add('hidden');
+        return null;
       }
 
       item.neuralAlphaMap = neuralAlpha;
@@ -1169,101 +1224,133 @@
       el.processingOverlay.classList.add('hidden');
       return neuralAlpha;
     } catch (err) {
-      console.warn('Neural ONNX fallback to CIE-LAB Salient Object Detector:', err);
+      console.warn('Neural ONNX fallback to Edge-Barrier Salient Object Detector:', err);
       el.processingOverlay.classList.add('hidden');
       return null;
     }
   }
 
   /**
-   * High-Speed Perceptual CIE-LAB + Sobel Edge Barrier + Saliency Object Detector
+   * High-Accuracy Edge-Barrier + Multi-Side Corner Consensus Salient Object Detector
+   * Prevents flood-fill from ever leaking into the main object or sampling subjects touching the bottom edge.
    */
   function detectSalientObjectFast(item, d, w, h) {
     const totalPixels = w * h;
-    const alpha = new Uint8ClampedArray(totalPixels);
-    for (let i = 0; i < totalPixels; i++) alpha[i] = d[i * 4 + 3];
 
-    // 1. Sample outer border strips (top, bottom, left, right) in perceptual CIE-LAB space
-    const borderSamples = [];
+    // 1. Sample 4 corners + top/left/right borders + outer 18% of bottom border
+    // (Excludes bottom-center 20..80% where standing subjects/portraits touch the frame!)
+    const samples = [];
     const stepX = Math.max(1, Math.floor(w / 48));
     const stepY = Math.max(1, Math.floor(h / 48));
-    const marginX = Math.max(1, Math.min(8, Math.floor(w * 0.02)));
-    const marginY = Math.max(1, Math.min(8, Math.floor(h * 0.02)));
+    const marginX = Math.max(1, Math.min(6, Math.floor(w * 0.015)));
+    const marginY = Math.max(1, Math.min(6, Math.floor(h * 0.015)));
 
     for (let x = 0; x < w; x += stepX) {
       const pTop = (marginY * w + x) * 4;
-      const pBot = ((h - 1 - marginY) * w + x) * 4;
-      borderSamples.push(rgbToLab(d[pTop], d[pTop + 1], d[pTop + 2]));
-      borderSamples.push(rgbToLab(d[pBot], d[pBot + 1], d[pBot + 2]));
+      samples.push({ r: d[pTop], g: d[pTop + 1], b: d[pTop + 2], side: 'top' });
+      if (x < w * 0.18 || x > w * 0.82) {
+        const pBot = ((h - 1 - marginY) * w + x) * 4;
+        samples.push({ r: d[pBot], g: d[pBot + 1], b: d[pBot + 2], side: 'bot_corner' });
+      }
     }
     for (let y = 0; y < h; y += stepY) {
       const pLeft = (y * w + marginX) * 4;
       const pRight = (y * w + (w - 1 - marginX)) * 4;
-      borderSamples.push(rgbToLab(d[pLeft], d[pLeft + 1], d[pLeft + 2]));
-      borderSamples.push(rgbToLab(d[pRight], d[pRight + 1], d[pRight + 2]));
+      samples.push({ r: d[pLeft], g: d[pLeft + 1], b: d[pLeft + 2], side: 'left' });
+      samples.push({ r: d[pRight], g: d[pRight + 1], b: d[pRight + 2], side: 'right' });
     }
 
-    // Cluster border LAB colors into up to 6 background centroids
-    const centroids = [];
-    for (const lab of borderSamples) {
+    // Cluster border samples and track which sides of the frame each cluster appears on
+    const clusters = [];
+    for (const s of samples) {
       let matched = false;
-      for (const c of centroids) {
-        const dist = Math.hypot(lab[0] - c.l, lab[1] - c.a, lab[2] - c.b);
-        if (dist < 18) {
-          c.l = (c.l * c.count + lab[0]) / (c.count + 1);
-          c.a = (c.a * c.count + lab[1]) / (c.count + 1);
-          c.b = (c.b * c.count + lab[2]) / (c.count + 1);
+      for (const c of clusters) {
+        if (Math.hypot(s.r - c.r, s.g - c.g, s.b - c.b) < 22) {
+          c.r = (c.r * c.count + s.r) / (c.count + 1);
+          c.g = (c.g * c.count + s.g) / (c.count + 1);
+          c.b = (c.b * c.count + s.b) / (c.count + 1);
           c.count++;
+          c.sides.add(s.side);
           matched = true;
           break;
         }
       }
-      if (!matched && centroids.length < 6) {
-        centroids.push({ l: lab[0], a: lab[1], b: lab[2], count: 1 });
+      if (!matched) {
+        clusters.push({ r: s.r, g: s.g, b: s.b, count: 1, sides: new Set([s.side]) });
       }
     }
 
-    const sens = state.settings.aiSensitivity; // 10..95
-    // Perceptual Delta-E threshold in LAB space
-    const baseDeltaE = 10 + (sens / 100) * 46;
+    // Keep only dominant background clusters (appearing on >=2 sides or >=18% of border samples)
+    let bgCentroids = clusters.filter(
+      (c) => c.sides.size >= 2 || c.count >= samples.length * 0.18
+    );
+    if (bgCentroids.length === 0 && clusters.length > 0) {
+      clusters.sort((a, b) => b.count - a.count);
+      bgCentroids = [clusters[0]];
+    }
 
-    function minLabDistToBg(r, g, b) {
-      const [l, a, bb] = rgbToLab(r, g, b);
+    // 2. Precompute 3x3 Sobel / Central-Difference Edge Gradient Magnitude Barrier
+    // Strong edges (object outlines, bezels, clothing boundaries) act as a hard wall that flood-fill cannot cross
+    const gradMag = new Float32Array(totalPixels);
+    for (let y = 1; y < h - 1; y++) {
+      const rowOff = y * w;
+      for (let x = 1; x < w - 1; x++) {
+        const idx = rowOff + x;
+        const pL = (idx - 1) * 4, pR = (idx + 1) * 4;
+        const pU = (idx - w) * 4, pD = (idx + w) * 4;
+        const dx = Math.max(
+          Math.abs(d[pR] - d[pL]),
+          Math.abs(d[pR + 1] - d[pL + 1]),
+          Math.abs(d[pR + 2] - d[pL + 2])
+        );
+        const dy = Math.max(
+          Math.abs(d[pD] - d[pU]),
+          Math.abs(d[pD + 1] - d[pU + 1]),
+          Math.abs(d[pD + 2] - d[pU + 2])
+        );
+        gradMag[idx] = Math.hypot(dx, dy);
+      }
+    }
+
+    function minDistToBg(r, g, b) {
       let minD = 999;
-      for (const c of centroids) {
-        // Weight chromaticity (a, b) slightly higher than luminance (L) so cast shadows on studio floors are removed too!
-        const dl = (l - c.l) * 0.72;
-        const da = (a - c.a) * 1.15;
-        const db = (bb - c.b) * 1.15;
-        const dist = Math.hypot(dl, da, db);
+      for (let i = 0; i < bgCentroids.length; i++) {
+        const c = bgCentroids[i];
+        const dist = Math.hypot(r - c.r, g - c.g, b - c.b);
         if (dist < minD) minD = dist;
       }
       return minD;
     }
 
-    // 2. Edge-aware border flood-fill with local gradient barrier
-    const visited = new Uint8Array(totalPixels);
-    const bgProb = new Float32Array(totalPixels);
-    const queue = new Int32Array(totalPixels);
-    let head = 0, tail = 0;
+    function runFloodPass(colorTol, edgeBarrier, stepLimit) {
+      const passAlpha = new Uint8ClampedArray(totalPixels);
+      for (let i = 0; i < totalPixels; i++) passAlpha[i] = d[i * 4 + 3];
 
-    function seed(x, y) {
-      const idx = y * w + x;
-      if (!visited[idx]) { visited[idx] = 1; queue[tail++] = idx; }
-    }
-    for (let x = 0; x < w; x++) { seed(x, 0); seed(x, h - 1); }
-    for (let y = 0; y < h; y++) { seed(0, y); seed(w - 1, y); }
+      const visited = new Uint8Array(totalPixels);
+      const bgMask = new Uint8Array(totalPixels);
+      const queue = new Int32Array(totalPixels);
+      let head = 0, tail = 0;
 
-    const stepEdgeLimit = 22 + (sens / 100) * 28;
+      function trySeed(x, y) {
+        const idx = y * w + x;
+        if (!visited[idx]) {
+          const p = idx * 4;
+          if (minDistToBg(d[p], d[p + 1], d[p + 2]) <= colorTol) {
+            visited[idx] = 1;
+            queue[tail++] = idx;
+          }
+        }
+      }
 
-    while (head < tail) {
-      const idx = queue[head++];
-      const p = idx * 4;
-      const r = d[p], g = d[p + 1], b = d[p + 2];
-      const distBg = minLabDistToBg(r, g, b);
+      for (let x = 0; x < w; x++) { trySeed(x, 0); trySeed(x, h - 1); }
+      for (let y = 0; y < h; y++) { trySeed(0, y); trySeed(w - 1, y); }
 
-      if (distBg <= baseDeltaE) {
-        bgProb[idx] = Math.max(0.05, 1 - (distBg / baseDeltaE) * 0.4);
+      while (head < tail) {
+        const idx = queue[head++];
+        bgMask[idx] = 1;
+        const p = idx * 4;
+        const r = d[p], g = d[p + 1], b = d[p + 2];
+
         const x = idx % w;
         const y = (idx - x) / w;
         const neighbors = [];
@@ -1272,30 +1359,72 @@
         if (y > 0) neighbors.push(idx - w);
         if (y < h - 1) neighbors.push(idx + w);
 
-        for (const nIdx of neighbors) {
+        for (let i = 0; i < neighbors.length; i++) {
+          const nIdx = neighbors[i];
           if (!visited[nIdx]) {
-            const np = nIdx * 4;
-            const stepDiff = Math.hypot(r - d[np], g - d[np + 1], b - d[np + 2]);
-            if (stepDiff < stepEdgeLimit) {
-              visited[nIdx] = 1;
-              queue[tail++] = nIdx;
+            // Stop at strong object contour edges!
+            if (gradMag[nIdx] <= edgeBarrier) {
+              const np = nIdx * 4;
+              const nr = d[np], ng = d[np + 1], nb = d[np + 2];
+              const step = Math.max(Math.abs(r - nr), Math.abs(g - ng), Math.abs(b - nb));
+              if (step <= stepLimit && minDistToBg(nr, ng, nb) <= colorTol) {
+                visited[nIdx] = 1;
+                queue[tail++] = nIdx;
+              }
             }
           }
         }
       }
-    }
 
-    for (let i = 0; i < totalPixels; i++) {
-      if (bgProb[i] > 0) {
-        const p = i * 4;
-        const distBg = minLabDistToBg(d[p], d[p + 1], d[p + 2]);
-        if (distBg < baseDeltaE * 0.76) {
-          alpha[i] = 0;
+      // Soften 1px boundary transition along the detected object contour
+      for (let i = 0; i < totalPixels; i++) {
+        if (bgMask[i]) {
+          passAlpha[i] = 0;
         } else {
-          const t = Math.min(1, (distBg - baseDeltaE * 0.76) / (baseDeltaE * 0.3));
-          alpha[i] = Math.round(alpha[i] * t);
+          // If adjacent to a removed background pixel and close to bg color, apply smooth anti-aliased edge
+          const x = i % w;
+          const y = (i - x) / w;
+          if (x > 0 && x < w - 1 && y > 0 && y < h - 1) {
+            const adjBg = bgMask[i - 1] + bgMask[i + 1] + bgMask[i - w] + bgMask[i + w];
+            if (adjBg > 0) {
+              const p = i * 4;
+              const dist = minDistToBg(d[p], d[p + 1], d[p + 2]);
+              if (dist < colorTol * 1.25 && gradMag[i] < edgeBarrier * 1.4) {
+                const factor = Math.max(0.25, Math.min(1, (dist - colorTol * 0.5) / (colorTol * 0.75)));
+                passAlpha[i] = Math.round(passAlpha[i] * factor);
+              }
+            }
+          }
         }
       }
+
+      return passAlpha;
+    }
+
+    const sens = state.settings.aiSensitivity; // 10..95
+    const baseColorTol = 12 + (sens / 100) * 42;    // 33.0 at sens=50
+    const baseEdgeBarrier = 16 + (sens / 100) * 28; // 30.0 at sens=50
+    const baseStepLimit = 8 + (sens / 100) * 18;    // 17.0 at sens=50
+
+    let alpha = runFloodPass(baseColorTol, baseEdgeBarrier, baseStepLimit);
+
+    // 3. Central Main Object Sanity Guard:
+    // Verify that the central object zone (25%..75% W/H) has not been accidentally wiped out
+    let centerFg = 0;
+    let centerTotal = 0;
+    const cx0 = Math.floor(w * 0.25), cx1 = Math.ceil(w * 0.75);
+    const cy0 = Math.floor(h * 0.25), cy1 = Math.ceil(h * 0.75);
+    for (let y = cy0; y < cy1; y++) {
+      const ro = y * w;
+      for (let x = cx0; x < cx1; x++) {
+        centerTotal++;
+        if (alpha[ro + x] > 128) centerFg++;
+      }
+    }
+
+    if (centerTotal > 0 && centerFg / centerTotal < 0.12) {
+      // Tighten thresholds automatically so the main object is preserved
+      alpha = runFloodPass(baseColorTol * 0.45, baseEdgeBarrier * 0.6, baseStepLimit * 0.6);
     }
 
     return alpha;
@@ -1376,16 +1505,32 @@
       if (item.cachedAiAlpha && item.cachedAiKey === cacheKey) {
         alpha.set(item.cachedAiAlpha);
       } else {
-        // Use Deep Neural Alpha Map if computed and engine is 'neural' or 'hybrid'
+        // Always compute Edge-Barrier Perceptual CIE-LAB Salient Object Mask
+        const fastAlpha = detectSalientObjectFast(item, d, w, h);
+
         if (item.neuralAlphaMap && state.settings.aiEngine !== 'fast') {
           const threshOffset = ((50 - state.settings.aiSensitivity) / 50) * 65;
+          // Verify how much of the edge-protected salient object the neural map retains
+          let fastFgCount = 0;
+          let bothFgCount = 0;
           for (let i = 0; i < totalPixels; i++) {
-            const v = item.neuralAlphaMap[i] - threshOffset;
-            alpha[i] = Math.max(0, Math.min(255, Math.round(v)));
+            if (fastAlpha[i] > 160) {
+              fastFgCount++;
+              if (item.neuralAlphaMap[i] - threshOffset > 110) bothFgCount++;
+            }
+          }
+          const overlapRatio = fastFgCount > 0 ? bothFgCount / fastFgCount : 1;
+
+          for (let i = 0; i < totalPixels; i++) {
+            const nv = Math.max(0, Math.min(255, Math.round(item.neuralAlphaMap[i] - threshOffset)));
+            if (state.settings.aiEngine === 'hybrid' || overlapRatio < 0.65) {
+              // Preserve the main object guaranteed by the edge-barrier detector
+              alpha[i] = Math.max(fastAlpha[i], nv);
+            } else {
+              alpha[i] = nv;
+            }
           }
         } else {
-          // Run Perceptual CIE-LAB Salient Object Detector
-          const fastAlpha = detectSalientObjectFast(item, d, w, h);
           alpha.set(fastAlpha);
         }
 
@@ -1428,19 +1573,25 @@
       return;
     }
 
+    // Clear any manual brush override so auto-detection has a clean slate
+    if (item.hasManualBrush && item.brushMask) {
+      item.brushMask.fill(128);
+      item.hasManualBrush = false;
+    }
+
     setBgRemovalMode('ai');
     item.cachedAiKey = null;
 
-    // 1. Run instant CIE-LAB salient object detection immediately for instant visual feedback
-    scheduleRender(true);
+    // 1. Run instant Edge-Barrier CIE-LAB salient object detection immediately
+    await renderSinglePreview(true);
     flashDetectedObjectBox(item);
 
-    // 2. If engine is 'neural' or 'hybrid', also run Deep Neural RMBG-1.4 segmentation
-    if (state.settings.aiEngine === 'neural' || state.settings.aiEngine === 'hybrid') {
+    // 2. If user explicitly selected 'neural' engine, also run Deep Neural RMBG-1.4 segmentation
+    if (state.settings.aiEngine === 'neural') {
       const neuralAlpha = await runNeuralObjectDetection(item);
       if (neuralAlpha) {
         item.cachedAiKey = null;
-        scheduleRender(true);
+        await renderSinglePreview(true);
         flashDetectedObjectBox(item);
         showToast(`Neural AI isolated object (${item.detectedBBox ? item.detectedBBox.width + '×' + item.detectedBBox.height + ' px' : 'complete'})!`);
         return;
@@ -1448,7 +1599,7 @@
     }
 
     showToast(
-      `Object isolated (${item.detectedBBox ? item.detectedBBox.width + '×' + item.detectedBBox.height + ' px' : 'complete'})!`
+      `Object isolated (${item.detectedBBox ? item.detectedBBox.width + '×' + item.detectedBBox.height + ' px • ' + item.detectedBBox.coveragePct + '% area' : 'complete'})!`
     );
   }
 
@@ -1467,6 +1618,10 @@
       el.bulkProgressPercent.textContent = `${pct}%`;
       el.bulkProgressBar.style.width = `${pct}%`;
 
+      if (it.hasManualBrush && it.brushMask) {
+        it.brushMask.fill(128);
+        it.hasManualBrush = false;
+      }
       it.cachedAiKey = null;
       if (state.settings.aiEngine === 'neural') {
         await runNeuralObjectDetection(it);
@@ -1480,7 +1635,7 @@
 
   /**
    * Interactive "🎯 Click Object" Smart Object Isolator
-   * Click any specific object on the canvas to segment & keep that contiguous object and remove everything else!
+   * Click any specific object on the canvas to segment & keep that entire contiguous object and remove everything else!
    */
   function isolateClickedObjectAtEvent(e) {
     const item = getActiveItem();
@@ -1502,44 +1657,64 @@
     const w = item.width, h = item.height;
     const total = w * h;
     const seedIdx = seedY * w + seedX;
-    const seedLab = rgbToLab(d[seedIdx * 4], d[seedIdx * 4 + 1], d[seedIdx * 4 + 2]);
 
-    // Region-growing from clicked seed point with adaptive LAB + local step threshold
+    // First run Edge-Barrier Salient Object Detector to see if user clicked inside a multi-color foreground object
+    const salientMask = detectSalientObjectFast(item, d, w, h);
+    cleanupObjectMaskAndFindBBox(salientMask, w, h, false);
+
     const visited = new Uint8Array(total);
     const objMask = new Uint8Array(total);
     const queue = new Int32Array(total);
     let head = 0, tail = 0;
 
-    visited[seedIdx] = 1;
-    queue[tail++] = seedIdx;
+    if (salientMask[seedIdx] > 80) {
+      // Flood-fill the entire connected foreground object component containing (seedX, seedY)
+      visited[seedIdx] = 1;
+      queue[tail++] = seedIdx;
+      while (head < tail) {
+        const idx = queue[head++];
+        objMask[idx] = 1;
+        const x = idx % w;
+        const y = (idx - x) / w;
+        if (x > 0 && !visited[idx - 1] && salientMask[idx - 1] > 80) { visited[idx - 1] = 1; queue[tail++] = idx - 1; }
+        if (x < w - 1 && !visited[idx + 1] && salientMask[idx + 1] > 80) { visited[idx + 1] = 1; queue[tail++] = idx + 1; }
+        if (y > 0 && !visited[idx - w] && salientMask[idx - w] > 80) { visited[idx - w] = 1; queue[tail++] = idx - w; }
+        if (y < h - 1 && !visited[idx + w] && salientMask[idx + w] > 80) { visited[idx + w] = 1; queue[tail++] = idx + w; }
+      }
+    } else {
+      // Fallback: Region-growing from clicked seed point with adaptive LAB + local step threshold
+      const seedLab = rgbToLab(d[seedIdx * 4], d[seedIdx * 4 + 1], d[seedIdx * 4 + 2]);
+      visited[seedIdx] = 1;
+      queue[tail++] = seedIdx;
 
-    const maxSeedDeltaE = 36 + (state.settings.aiSensitivity / 100) * 55;
-    const maxStepRGB = 28 + (state.settings.aiSensitivity / 100) * 32;
+      const maxSeedDeltaE = 36 + (state.settings.aiSensitivity / 100) * 55;
+      const maxStepRGB = 28 + (state.settings.aiSensitivity / 100) * 32;
 
-    while (head < tail) {
-      const idx = queue[head++];
-      objMask[idx] = 1;
-      const p = idx * 4;
-      const r = d[p], g = d[p + 1], b = d[p + 2];
+      while (head < tail) {
+        const idx = queue[head++];
+        objMask[idx] = 1;
+        const p = idx * 4;
+        const r = d[p], g = d[p + 1], b = d[p + 2];
 
-      const x = idx % w;
-      const y = (idx - x) / w;
-      const neighbors = [];
-      if (x > 0) neighbors.push(idx - 1);
-      if (x < w - 1) neighbors.push(idx + 1);
-      if (y > 0) neighbors.push(idx - w);
-      if (y < h - 1) neighbors.push(idx + w);
+        const x = idx % w;
+        const y = (idx - x) / w;
+        const neighbors = [];
+        if (x > 0) neighbors.push(idx - 1);
+        if (x < w - 1) neighbors.push(idx + 1);
+        if (y > 0) neighbors.push(idx - w);
+        if (y < h - 1) neighbors.push(idx + w);
 
-      for (const nIdx of neighbors) {
-        if (!visited[nIdx]) {
-          const np = nIdx * 4;
-          const stepDiff = Math.hypot(r - d[np], g - d[np + 1], b - d[np + 2]);
-          if (stepDiff <= maxStepRGB) {
-            const nLab = rgbToLab(d[np], d[np + 1], d[np + 2]);
-            const seedDiff = Math.hypot(nLab[0] - seedLab[0], nLab[1] - seedLab[1], nLab[2] - seedLab[2]);
-            if (seedDiff <= maxSeedDeltaE) {
-              visited[nIdx] = 1;
-              queue[tail++] = nIdx;
+        for (const nIdx of neighbors) {
+          if (!visited[nIdx]) {
+            const np = nIdx * 4;
+            const stepDiff = Math.hypot(r - d[np], g - d[np + 1], b - d[np + 2]);
+            if (stepDiff <= maxStepRGB) {
+              const nLab = rgbToLab(d[np], d[np + 1], d[np + 2]);
+              const seedDiff = Math.hypot(nLab[0] - seedLab[0], nLab[1] - seedLab[1], nLab[2] - seedLab[2]);
+              if (seedDiff <= maxSeedDeltaE) {
+                visited[nIdx] = 1;
+                queue[tail++] = nIdx;
+              }
             }
           }
         }
