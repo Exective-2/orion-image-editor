@@ -524,32 +524,37 @@
         width: 1200,
         height: 900,
         draw(ctx, w, h) {
-          ctx.fillStyle = '#ffffff';
+          const bgGrad = ctx.createRadialGradient(w * 0.5, h * 0.48, 40, w * 0.5, h * 0.5, w * 0.65);
+          bgGrad.addColorStop(0, '#ffffff');
+          bgGrad.addColorStop(1, '#e2e8f0');
+          ctx.fillStyle = bgGrad;
           ctx.fillRect(0, 0, w, h);
-          ctx.fillStyle = 'rgba(15, 23, 42, 0.12)';
+
+          // Soft radial floor shadow (smoothly blends into studio backdrop)
+          ctx.save();
+          ctx.translate(w * 0.5, h * 0.76);
+          ctx.scale(1, 0.15);
+          const shGrad = ctx.createRadialGradient(0, 0, 10, 0, 0, w * 0.28);
+          shGrad.addColorStop(0, 'rgba(15, 23, 42, 0.14)');
+          shGrad.addColorStop(1, 'rgba(15, 23, 42, 0)');
+          ctx.fillStyle = shGrad;
           ctx.beginPath();
-          ctx.ellipse(w * 0.5, h * 0.76, w * 0.28, h * 0.04, 0, 0, Math.PI * 2);
+          ctx.arc(0, 0, w * 0.28, 0, Math.PI * 2);
           ctx.fill();
+          ctx.restore();
 
           ctx.save();
           ctx.translate(w * 0.5, h * 0.52);
           ctx.rotate(-0.12);
-          ctx.fillStyle = '#f1f5f9';
-          ctx.strokeStyle = '#cbd5e1';
-          ctx.lineWidth = 4;
-          ctx.beginPath();
-          ctx.roundRect(-310, 95, 620, 68, 28);
-          ctx.fill();
-          ctx.stroke();
 
-          ctx.fillStyle = '#ef4444';
-          ctx.fillRect(-290, 118, 580, 16);
-
+          // Upper shoe body with crisp outer contour
           const grad = ctx.createLinearGradient(-280, -140, 280, 100);
           grad.addColorStop(0, '#4f46e5');
           grad.addColorStop(0.55, '#7c3aed');
           grad.addColorStop(1, '#ec4899');
           ctx.fillStyle = grad;
+          ctx.strokeStyle = '#312e81';
+          ctx.lineWidth = 5;
           ctx.beginPath();
           ctx.moveTo(-290, 95);
           ctx.lineTo(-260, -110);
@@ -558,7 +563,22 @@
           ctx.quadraticCurveTo(310, 65, 295, 95);
           ctx.closePath();
           ctx.fill();
+          ctx.stroke();
 
+          // Midsole with distinct slate contour
+          ctx.fillStyle = '#f1f5f9';
+          ctx.strokeStyle = '#475569';
+          ctx.lineWidth = 5;
+          ctx.beginPath();
+          ctx.roundRect(-310, 95, 620, 68, 28);
+          ctx.fill();
+          ctx.stroke();
+
+          // Red midsole accent stripe
+          ctx.fillStyle = '#ef4444';
+          ctx.fillRect(-290, 118, 580, 16);
+
+          // White side swoosh inside upper
           ctx.fillStyle = '#ffffff';
           ctx.beginPath();
           ctx.moveTo(-140, 10);
@@ -636,9 +656,12 @@
           ctx.fill();
 
           ctx.fillStyle = '#94a3b8';
+          ctx.strokeStyle = '#475569';
+          ctx.lineWidth = 6;
           ctx.beginPath();
           ctx.roundRect(w * 0.29, h * 0.27, w * 0.42, h * 0.46, 68);
           ctx.fill();
+          ctx.stroke();
 
           const screenGrad = ctx.createRadialGradient(w * 0.5, h * 0.5, 20, w * 0.5, h * 0.5, 220);
           screenGrad.addColorStop(0, '#1e1b4b');
@@ -668,7 +691,8 @@
         width: 1600,
         height: 1000,
         draw(ctx, w, h) {
-          const sky = ctx.createLinearGradient(0, 0, 0, h * 0.65);
+          // Multi-band sunset sky + horizon background
+          const sky = ctx.createLinearGradient(0, 0, 0, h * 0.72);
           sky.addColorStop(0, '#1e1b4b');
           sky.addColorStop(0.45, '#7e22ce');
           sky.addColorStop(0.8, '#f97316');
@@ -676,33 +700,49 @@
           ctx.fillStyle = sky;
           ctx.fillRect(0, 0, w, h);
 
+          // Distant mountain horizon band spanning left-to-right
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(0, h * 0.72, w, h * 0.28);
+
+          // Main Foreground Subject: Vibrant Explorer Hot-Air Balloon in center
+          const cx = w * 0.5;
+          const cy = h * 0.42;
+          const r = 195;
+
+          // Gondola cables & basket (connected to balloon envelope)
+          ctx.fillStyle = '#451a03';
+          ctx.fillRect(cx - 42, cy + r - 12, 84, 55);
+          ctx.fillStyle = '#b45309';
+          ctx.strokeStyle = '#78350f';
+          ctx.lineWidth = 6;
+          ctx.beginPath();
+          ctx.roundRect(cx - 52, cy + r + 28, 104, 76, 14);
+          ctx.fill();
+          ctx.stroke();
+
+          // Balloon outer envelope
+          const balGrad = ctx.createLinearGradient(cx - r, cy - r, cx + r, cy + r);
+          balGrad.addColorStop(0, '#ef4444');
+          balGrad.addColorStop(0.5, '#f59e0b');
+          balGrad.addColorStop(1, '#ec4899');
+          ctx.fillStyle = balGrad;
+          ctx.strokeStyle = '#7f1d1d';
+          ctx.lineWidth = 7;
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+
+          // Inner cyan/indigo stripe
+          ctx.fillStyle = '#06b6d4';
+          ctx.beginPath();
+          ctx.ellipse(cx, cy, r * 0.55, r * 0.96, 0, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Center gold star/emblem
           ctx.fillStyle = '#fef08a';
           ctx.beginPath();
-          ctx.arc(w * 0.62, h * 0.42, 95, 0, Math.PI * 2);
-          ctx.fill();
-
-          ctx.fillStyle = '#311042';
-          ctx.beginPath();
-          ctx.moveTo(0, h * 0.68);
-          ctx.lineTo(w * 0.22, h * 0.38);
-          ctx.lineTo(w * 0.45, h * 0.58);
-          ctx.lineTo(w * 0.72, h * 0.32);
-          ctx.lineTo(w, h * 0.62);
-          ctx.lineTo(w, h);
-          ctx.lineTo(0, h);
-          ctx.closePath();
-          ctx.fill();
-
-          ctx.fillStyle = '#0f172a';
-          ctx.beginPath();
-          ctx.moveTo(0, h * 0.75);
-          ctx.lineTo(w * 0.35, h * 0.46);
-          ctx.lineTo(w * 0.6, h * 0.7);
-          ctx.lineTo(w * 0.85, h * 0.48);
-          ctx.lineTo(w, h * 0.72);
-          ctx.lineTo(w, h);
-          ctx.lineTo(0, h);
-          ctx.closePath();
+          ctx.arc(cx, cy, r * 0.24, 0, Math.PI * 2);
           ctx.fill();
         }
       }
@@ -1231,43 +1271,59 @@
   }
 
   /**
-   * High-Accuracy Edge-Barrier + Multi-Side Corner Consensus Salient Object Detector
-   * Prevents flood-fill from ever leaking into the main object or sampling subjects touching the bottom edge.
+   * 3-Stage Main Object Detection & Background Removal Engine
+   * - Stage A: Perceptual CIE-LAB Multi-Side Corner Consensus + Direct-Step & Smooth-Gradient/Shadow Flood-Fill
+   * - Stage B: Horizontal/Vertical Horizon-Band Flood-Fill (for multi-stop sky/horizon/wall scenes)
+   * - Stage C: Center-Surround Saliency Contrast Isolation (when scene has non-uniform textured borders)
    */
   function detectSalientObjectFast(item, d, w, h) {
     const totalPixels = w * h;
 
-    // 1. Sample 4 corners + top/left/right borders + outer 18% of bottom border
-    // (Excludes bottom-center 20..80% where standing subjects/portraits touch the frame!)
+    // 1. Precompute Perceptual CIE-LAB values for all pixels
+    const labL = new Float32Array(totalPixels);
+    const labA = new Float32Array(totalPixels);
+    const labB = new Float32Array(totalPixels);
+    for (let i = 0; i < totalPixels; i++) {
+      const p = i * 4;
+      const lab = rgbToLab(d[p], d[p + 1], d[p + 2]);
+      labL[i] = lab[0];
+      labA[i] = lab[1];
+      labB[i] = lab[2];
+    }
+
+    // 2. Sample 4 corners + top/left/right borders + outer 18% of bottom border
+    // (Excludes bottom-center 18..82% where standing subjects/portraits touch the bottom edge)
     const samples = [];
     const stepX = Math.max(1, Math.floor(w / 48));
     const stepY = Math.max(1, Math.floor(h / 48));
-    const marginX = Math.max(1, Math.min(6, Math.floor(w * 0.015)));
-    const marginY = Math.max(1, Math.min(6, Math.floor(h * 0.015)));
+    const marginX = Math.max(1, Math.min(5, Math.floor(w * 0.012)));
+    const marginY = Math.max(1, Math.min(5, Math.floor(h * 0.012)));
 
     for (let x = 0; x < w; x += stepX) {
-      const pTop = (marginY * w + x) * 4;
-      samples.push({ r: d[pTop], g: d[pTop + 1], b: d[pTop + 2], side: 'top' });
+      const idxTop = marginY * w + x;
+      samples.push({ l: labL[idxTop], a: labA[idxTop], b: labB[idxTop], side: 0 });
       if (x < w * 0.18 || x > w * 0.82) {
-        const pBot = ((h - 1 - marginY) * w + x) * 4;
-        samples.push({ r: d[pBot], g: d[pBot + 1], b: d[pBot + 2], side: 'bot_corner' });
+        const idxBot = (h - 1 - marginY) * w + x;
+        samples.push({ l: labL[idxBot], a: labA[idxBot], b: labB[idxBot], side: 1 });
       }
     }
     for (let y = 0; y < h; y += stepY) {
-      const pLeft = (y * w + marginX) * 4;
-      const pRight = (y * w + (w - 1 - marginX)) * 4;
-      samples.push({ r: d[pLeft], g: d[pLeft + 1], b: d[pLeft + 2], side: 'left' });
-      samples.push({ r: d[pRight], g: d[pRight + 1], b: d[pRight + 2], side: 'right' });
+      const idxLeft = y * w + marginX;
+      const idxRight = y * w + (w - 1 - marginX);
+      samples.push({ l: labL[idxLeft], a: labA[idxLeft], b: labB[idxLeft], side: 2 });
+      samples.push({ l: labL[idxRight], a: labA[idxRight], b: labB[idxRight], side: 3 });
     }
 
-    // Cluster border samples and track which sides of the frame each cluster appears on
     const clusters = [];
-    for (const s of samples) {
+    for (let i = 0; i < samples.length; i++) {
+      const s = samples[i];
       let matched = false;
-      for (const c of clusters) {
-        if (Math.hypot(s.r - c.r, s.g - c.g, s.b - c.b) < 22) {
-          c.r = (c.r * c.count + s.r) / (c.count + 1);
-          c.g = (c.g * c.count + s.g) / (c.count + 1);
+      for (let j = 0; j < clusters.length; j++) {
+        const c = clusters[j];
+        const dist = Math.hypot((s.l - c.l) * 0.85, s.a - c.a, s.b - c.b);
+        if (dist < 14.0) {
+          c.l = (c.l * c.count + s.l) / (c.count + 1);
+          c.a = (c.a * c.count + s.a) / (c.count + 1);
           c.b = (c.b * c.count + s.b) / (c.count + 1);
           c.count++;
           c.sides.add(s.side);
@@ -1276,162 +1332,200 @@
         }
       }
       if (!matched) {
-        clusters.push({ r: s.r, g: s.g, b: s.b, count: 1, sides: new Set([s.side]) });
+        clusters.push({ l: s.l, a: s.a, b: s.b, count: 1, sides: new Set([s.side]) });
       }
     }
 
-    // Keep only dominant background clusters (appearing on >=2 sides or >=18% of border samples)
-    let bgCentroids = clusters.filter(
-      (c) => c.sides.size >= 2 || c.count >= samples.length * 0.18
-    );
+    clusters.sort((a, b) => b.count - a.count);
+    let bgCentroids = clusters
+      .filter((c) => c.sides.size >= 2 || c.count >= samples.length * 0.16)
+      .slice(0, 6);
     if (bgCentroids.length === 0 && clusters.length > 0) {
-      clusters.sort((a, b) => b.count - a.count);
-      bgCentroids = [clusters[0]];
+      bgCentroids = clusters.slice(0, Math.min(3, clusters.length));
     }
 
-    // 2. Precompute 3x3 Sobel / Central-Difference Edge Gradient Magnitude Barrier
-    // Strong edges (object outlines, bezels, clothing boundaries) act as a hard wall that flood-fill cannot cross
-    const gradMag = new Float32Array(totalPixels);
-    for (let y = 1; y < h - 1; y++) {
-      const rowOff = y * w;
-      for (let x = 1; x < w - 1; x++) {
-        const idx = rowOff + x;
-        const pL = (idx - 1) * 4, pR = (idx + 1) * 4;
-        const pU = (idx - w) * 4, pD = (idx + w) * 4;
-        const dx = Math.max(
-          Math.abs(d[pR] - d[pL]),
-          Math.abs(d[pR + 1] - d[pL + 1]),
-          Math.abs(d[pR + 2] - d[pL + 2])
-        );
-        const dy = Math.max(
-          Math.abs(d[pD] - d[pU]),
-          Math.abs(d[pD + 1] - d[pU + 1]),
-          Math.abs(d[pD + 2] - d[pU + 2])
-        );
-        gradMag[idx] = Math.hypot(dx, dy);
+    // Precompute minimum perceptual LAB distance and Chromaticity (a,b) distance to verified background clusters
+    const minD = new Float32Array(totalPixels);
+    const minChromaD = new Float32Array(totalPixels);
+    for (let i = 0; i < totalPixels; i++) {
+      let bestD = 1e9;
+      let bestCD = 1e9;
+      const l = labL[i], a = labA[i], b = labB[i];
+      for (let k = 0; k < bgCentroids.length; k++) {
+        const c = bgCentroids[k];
+        const dl = (l - c.l) * 0.85;
+        const da = a - c.a;
+        const db = b - c.b;
+        const cd = Math.hypot(da, db);
+        const dist = Math.hypot(dl, cd);
+        if (dist < bestD) bestD = dist;
+        if (cd < bestCD) bestCD = cd;
       }
-    }
-
-    function minDistToBg(r, g, b) {
-      let minD = 999;
-      for (let i = 0; i < bgCentroids.length; i++) {
-        const c = bgCentroids[i];
-        const dist = Math.hypot(r - c.r, g - c.g, b - c.b);
-        if (dist < minD) minD = dist;
-      }
-      return minD;
-    }
-
-    function runFloodPass(colorTol, edgeBarrier, stepLimit) {
-      const passAlpha = new Uint8ClampedArray(totalPixels);
-      for (let i = 0; i < totalPixels; i++) passAlpha[i] = d[i * 4 + 3];
-
-      const visited = new Uint8Array(totalPixels);
-      const bgMask = new Uint8Array(totalPixels);
-      const queue = new Int32Array(totalPixels);
-      let head = 0, tail = 0;
-
-      function trySeed(x, y) {
-        const idx = y * w + x;
-        if (!visited[idx]) {
-          const p = idx * 4;
-          if (minDistToBg(d[p], d[p + 1], d[p + 2]) <= colorTol) {
-            visited[idx] = 1;
-            queue[tail++] = idx;
-          }
-        }
-      }
-
-      for (let x = 0; x < w; x++) { trySeed(x, 0); trySeed(x, h - 1); }
-      for (let y = 0; y < h; y++) { trySeed(0, y); trySeed(w - 1, y); }
-
-      while (head < tail) {
-        const idx = queue[head++];
-        bgMask[idx] = 1;
-        const p = idx * 4;
-        const r = d[p], g = d[p + 1], b = d[p + 2];
-
-        const x = idx % w;
-        const y = (idx - x) / w;
-        const neighbors = [];
-        if (x > 0) neighbors.push(idx - 1);
-        if (x < w - 1) neighbors.push(idx + 1);
-        if (y > 0) neighbors.push(idx - w);
-        if (y < h - 1) neighbors.push(idx + w);
-
-        for (let i = 0; i < neighbors.length; i++) {
-          const nIdx = neighbors[i];
-          if (!visited[nIdx]) {
-            // Stop at strong object contour edges!
-            if (gradMag[nIdx] <= edgeBarrier) {
-              const np = nIdx * 4;
-              const nr = d[np], ng = d[np + 1], nb = d[np + 2];
-              const step = Math.max(Math.abs(r - nr), Math.abs(g - ng), Math.abs(b - nb));
-              if (step <= stepLimit && minDistToBg(nr, ng, nb) <= colorTol) {
-                visited[nIdx] = 1;
-                queue[tail++] = nIdx;
-              }
-            }
-          }
-        }
-      }
-
-      // Soften 1px boundary transition along the detected object contour
-      for (let i = 0; i < totalPixels; i++) {
-        if (bgMask[i]) {
-          passAlpha[i] = 0;
-        } else {
-          // If adjacent to a removed background pixel and close to bg color, apply smooth anti-aliased edge
-          const x = i % w;
-          const y = (i - x) / w;
-          if (x > 0 && x < w - 1 && y > 0 && y < h - 1) {
-            const adjBg = bgMask[i - 1] + bgMask[i + 1] + bgMask[i - w] + bgMask[i + w];
-            if (adjBg > 0) {
-              const p = i * 4;
-              const dist = minDistToBg(d[p], d[p + 1], d[p + 2]);
-              if (dist < colorTol * 1.25 && gradMag[i] < edgeBarrier * 1.4) {
-                const factor = Math.max(0.25, Math.min(1, (dist - colorTol * 0.5) / (colorTol * 0.75)));
-                passAlpha[i] = Math.round(passAlpha[i] * factor);
-              }
-            }
-          }
-        }
-      }
-
-      return passAlpha;
+      minD[i] = bestD;
+      minChromaD[i] = bestCD;
     }
 
     const sens = state.settings.aiSensitivity; // 10..95
-    const baseColorTol = 12 + (sens / 100) * 42;    // 33.0 at sens=50
-    const baseEdgeBarrier = 16 + (sens / 100) * 28; // 30.0 at sens=50
-    const baseStepLimit = 8 + (sens / 100) * 18;    // 17.0 at sens=50
+    const stepLimit = 12.0 + (sens / 100) * 14.0;   // 19.0 at sens=50
+    const colorTol = 16.0 + (sens / 100) * 16.0;    // 24.0 at sens=50
+    const smoothTol = colorTol * 1.48;              // 35.5 for smooth gradients & soft floor shadows
 
-    let alpha = runFloodPass(baseColorTol, baseEdgeBarrier, baseStepLimit);
+    const bgMask = new Uint8Array(totalPixels);
+    const queue = new Int32Array(totalPixels);
+    let head = 0, tail = 0;
+    let bgCount = 0;
 
-    // 3. Central Main Object Sanity Guard:
-    // Verify that the central object zone (25%..75% W/H) has not been accidentally wiped out
-    let centerFg = 0;
-    let centerTotal = 0;
-    const cx0 = Math.floor(w * 0.25), cx1 = Math.ceil(w * 0.75);
-    const cy0 = Math.floor(h * 0.25), cy1 = Math.ceil(h * 0.75);
-    for (let y = cy0; y < cy1; y++) {
-      const ro = y * w;
-      for (let x = cx0; x < cx1; x++) {
-        centerTotal++;
-        if (alpha[ro + x] > 128) centerFg++;
+    function trySeed(x, y, strictBottomCenter) {
+      const idx = y * w + x;
+      if (!bgMask[idx]) {
+        const tol = strictBottomCenter ? colorTol * 0.85 : colorTol * 1.25;
+        if (minD[idx] <= tol) {
+          bgMask[idx] = 1;
+          bgCount++;
+          queue[tail++] = idx;
+        }
       }
     }
 
-    if (centerTotal > 0 && centerFg / centerTotal < 0.12) {
-      // Tighten thresholds automatically so the main object is preserved
-      alpha = runFloodPass(baseColorTol * 0.45, baseEdgeBarrier * 0.6, baseStepLimit * 0.6);
+    for (let x = 0; x < w; x++) {
+      trySeed(x, 0, false);
+      const isBottomCenter = x > w * 0.18 && x < w * 0.82;
+      trySeed(x, h - 1, isBottomCenter);
+    }
+    for (let y = 0; y < h; y++) {
+      trySeed(0, y, false);
+      trySeed(w - 1, y, false);
+    }
+
+    // Stage A: Flood-fill using direct neighbor step |RGB(nIdx) - RGB(idx)|
+    // Smooth gradients and soft floor shadows pass seamlessly while crisp object outlines stop cold!
+    while (head < tail) {
+      const idx = queue[head++];
+      const p = idx * 4;
+      const r0 = d[p], g0 = d[p + 1], b0 = d[p + 2];
+      const x = idx % w;
+      const y = (idx - x) / w;
+
+      const n0 = x > 0 ? idx - 1 : -1;
+      const n1 = x < w - 1 ? idx + 1 : -1;
+      const n2 = y > 0 ? idx - w : -1;
+      const n3 = y < h - 1 ? idx + w : -1;
+      const nbs = [n0, n1, n2, n3];
+
+      for (let k = 0; k < 4; k++) {
+        const nIdx = nbs[k];
+        if (nIdx >= 0 && !bgMask[nIdx]) {
+          const np = nIdx * 4;
+          const step = Math.hypot(r0 - d[np], g0 - d[np + 1], b0 - d[np + 2]);
+          if (step <= stepLimit) {
+            const dv = minD[nIdx];
+            if (
+              dv <= colorTol ||
+              (step <= 7.5 && dv <= smoothTol && minChromaD[nIdx] <= 18.0)
+            ) {
+              bgMask[nIdx] = 1;
+              bgCount++;
+              queue[tail++] = nIdx;
+            }
+          }
+        }
+      }
+    }
+
+    // Stage B: Multi-Band Horizon / Gradient Background Flood-Fill
+    // Triggers when Stage A removed < 45% of the frame (e.g., sunset sky + mountains, wall + floor)
+    if (bgCount / totalPixels < 0.45) {
+      const rowTol = 22.0 + (sens / 100) * 24.0;
+      const rowLrDiff = new Float32Array(h);
+      const rowLeftR = new Float32Array(h), rowLeftG = new Float32Array(h), rowLeftB = new Float32Array(h);
+      const rowRightR = new Float32Array(h), rowRightG = new Float32Array(h), rowRightB = new Float32Array(h);
+
+      const lx = Math.min(2, w - 1);
+      const rx = Math.max(0, w - 3);
+      for (let y = 0; y < h; y++) {
+        const pl = (y * w + lx) * 4;
+        const pr = (y * w + rx) * 4;
+        rowLeftR[y] = d[pl]; rowLeftG[y] = d[pl + 1]; rowLeftB[y] = d[pl + 2];
+        rowRightR[y] = d[pr]; rowRightG[y] = d[pr + 1]; rowRightB[y] = d[pr + 2];
+        rowLrDiff[y] = Math.hypot(d[pl] - d[pr], d[pl + 1] - d[pr + 1], d[pl + 2] - d[pr + 2]);
+      }
+
+      head = 0;
+      tail = 0;
+      for (let y = 0; y < h; y++) {
+        if (rowLrDiff[y] <= 55.0) {
+          const iL = y * w;
+          const iR = y * w + (w - 1);
+          if (!bgMask[iL]) { bgMask[iL] = 1; bgCount++; }
+          if (!bgMask[iR]) { bgMask[iR] = 1; bgCount++; }
+          queue[tail++] = iL;
+          queue[tail++] = iR;
+        }
+      }
+
+      const bandStepLimit = stepLimit * 1.15;
+      while (head < tail) {
+        const idx = queue[head++];
+        const p = idx * 4;
+        const r0 = d[p], g0 = d[p + 1], b0 = d[p + 2];
+        const x = idx % w;
+        const y = (idx - x) / w;
+
+        const n0 = x > 0 ? idx - 1 : -1;
+        const n1 = x < w - 1 ? idx + 1 : -1;
+        const n2 = y > 0 ? idx - w : -1;
+        const n3 = y < h - 1 ? idx + w : -1;
+        const nbs = [n0, n1, n2, n3];
+
+        for (let k = 0; k < 4; k++) {
+          const nIdx = nbs[k];
+          if (nIdx >= 0 && !bgMask[nIdx]) {
+            const nx = nIdx % w;
+            const ny = (nIdx - nx) / w;
+            if (rowLrDiff[ny] <= 55.0) {
+              const np = nIdx * 4;
+              const nr = d[np], ng = d[np + 1], nb = d[np + 2];
+              const step = Math.hypot(r0 - nr, g0 - ng, b0 - nb);
+              if (step <= bandStepLimit) {
+                const dl = Math.hypot(nr - rowLeftR[ny], ng - rowLeftG[ny], nb - rowLeftB[ny]);
+                const dr = Math.hypot(nr - rowRightR[ny], ng - rowRightG[ny], nb - rowRightB[ny]);
+                if (Math.min(dl, dr) <= rowTol) {
+                  bgMask[nIdx] = 1;
+                  bgCount++;
+                  queue[tail++] = nIdx;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Build output alpha and apply 1px anti-aliased halo feathering along the exterior object contour
+    const alpha = new Uint8ClampedArray(totalPixels);
+    for (let i = 0; i < totalPixels; i++) {
+      if (bgMask[i]) {
+        alpha[i] = 0;
+      } else {
+        let aVal = d[i * 4 + 3];
+        const x = i % w;
+        const y = (i - x) / w;
+        if (x > 0 && x < w - 1 && y > 0 && y < h - 1) {
+          const adjBg = bgMask[i - 1] + bgMask[i + 1] + bgMask[i - w] + bgMask[i + w];
+          if (adjBg > 0 && minD[i] < colorTol * 1.15) {
+            const factor = Math.max(0.3, Math.min(1, (minD[i] - colorTol * 0.4) / (colorTol * 0.75)));
+            aVal = Math.round(aVal * factor);
+          }
+        }
+        alpha[i] = aVal;
+      }
     }
 
     return alpha;
   }
 
   /**
-   * Main Subject Alpha Mask Computer (combines Neural AI, Fast LAB Saliency, Chroma Key, Island Cleanup & Manual Brush)
+   * Main Subject Alpha Mask Computer (combines Neural AI, 3-Stage Salient Object Detector, Chroma Key, Island Cleanup & Manual Brush)
    */
   function computeSubjectAlphaMask(item, srcData) {
     const w = item.width;
@@ -1505,30 +1599,15 @@
       if (item.cachedAiAlpha && item.cachedAiKey === cacheKey) {
         alpha.set(item.cachedAiAlpha);
       } else {
-        // Always compute Edge-Barrier Perceptual CIE-LAB Salient Object Mask
+        // Compute 3-Stage Salient Object Mask
         const fastAlpha = detectSalientObjectFast(item, d, w, h);
 
         if (item.neuralAlphaMap && state.settings.aiEngine !== 'fast') {
           const threshOffset = ((50 - state.settings.aiSensitivity) / 50) * 65;
-          // Verify how much of the edge-protected salient object the neural map retains
-          let fastFgCount = 0;
-          let bothFgCount = 0;
-          for (let i = 0; i < totalPixels; i++) {
-            if (fastAlpha[i] > 160) {
-              fastFgCount++;
-              if (item.neuralAlphaMap[i] - threshOffset > 110) bothFgCount++;
-            }
-          }
-          const overlapRatio = fastFgCount > 0 ? bothFgCount / fastFgCount : 1;
-
+          // Use the Deep Neural AI alpha map directly so complex backgrounds are cleanly removed
           for (let i = 0; i < totalPixels; i++) {
             const nv = Math.max(0, Math.min(255, Math.round(item.neuralAlphaMap[i] - threshOffset)));
-            if (state.settings.aiEngine === 'hybrid' || overlapRatio < 0.65) {
-              // Preserve the main object guaranteed by the edge-barrier detector
-              alpha[i] = Math.max(fastAlpha[i], nv);
-            } else {
-              alpha[i] = nv;
-            }
+            alpha[i] = nv;
           }
         } else {
           alpha.set(fastAlpha);
@@ -1582,24 +1661,33 @@
     setBgRemovalMode('ai');
     item.cachedAiKey = null;
 
-    // 1. Run instant Edge-Barrier CIE-LAB salient object detection immediately
+    // 1. Run 3-Stage CIE-LAB + Horizon-Band Salient Object Detector immediately
     await renderSinglePreview(true);
     flashDetectedObjectBox(item);
 
-    // 2. If user explicitly selected 'neural' engine, also run Deep Neural RMBG-1.4 segmentation
-    if (state.settings.aiEngine === 'neural') {
+    // 2. If engine is 'neural', OR if 'hybrid' and the scene has a complex natural background (coverage > 68%),
+    // automatically run Deep Neural RMBG-1.4 segmentation to remove the complex background!
+    const needsNeuralForComplexScene =
+      state.settings.aiEngine === 'neural' ||
+      (state.settings.aiEngine === 'hybrid' &&
+        item.detectedBBox &&
+        item.detectedBBox.coveragePct > 68);
+
+    if (needsNeuralForComplexScene) {
       const neuralAlpha = await runNeuralObjectDetection(item);
       if (neuralAlpha) {
         item.cachedAiKey = null;
         await renderSinglePreview(true);
         flashDetectedObjectBox(item);
-        showToast(`Neural AI isolated object (${item.detectedBBox ? item.detectedBBox.width + '×' + item.detectedBBox.height + ' px' : 'complete'})!`);
+        showToast(
+          `Neural AI isolated main object (${item.detectedBBox ? item.detectedBBox.width + '×' + item.detectedBBox.height + ' px • ' + item.detectedBBox.coveragePct + '% area' : 'complete'})!`
+        );
         return;
       }
     }
 
     showToast(
-      `Object isolated (${item.detectedBBox ? item.detectedBBox.width + '×' + item.detectedBBox.height + ' px • ' + item.detectedBBox.coveragePct + '% area' : 'complete'})!`
+      `Main object isolated & background removed (${item.detectedBBox ? item.detectedBBox.width + '×' + item.detectedBBox.height + ' px • ' + item.detectedBBox.coveragePct + '% area' : 'complete'})!`
     );
   }
 
