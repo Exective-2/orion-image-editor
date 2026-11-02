@@ -1,0 +1,1052 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Orion Image Studio — Pro Single & Bulk Image Editor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+  <!-- JSZip for bulk ZIP & Multi-Size Pack export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Top Navigation Header -->
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-logo">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+          </svg>
+        </div>
+        <div>
+          <span class="brand-title">Orion Image Studio</span>
+          <span class="brand-badge">ULTIMATE SUITE</span>
+        </div>
+      </div>
+
+      <!-- Mode Switcher: Single vs Bulk -->
+      <div class="mode-switcher" role="tablist" aria-label="Editing Mode">
+        <button id="modeSingleBtn" class="mode-btn active" data-mode="single">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>
+          </svg>
+          Single Studio
+        </button>
+        <button id="modeBulkBtn" class="mode-btn" data-mode="bulk">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="8" y="8" width="13" height="13" rx="2"/><path d="M4 16H3a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v1"/>
+          </svg>
+          Bulk Batch Processor
+          <span id="queueCountBadge" class="badge-pill">0</span>
+        </button>
+      </div>
+
+      <!-- Right Global Actions -->
+      <div class="topbar-actions">
+        <label for="fileInput" class="btn btn-secondary" title="Add images from disk (or press Ctrl+V to paste from clipboard)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          Add Images
+        </label>
+        <input type="file" id="fileInput" multiple accept="image/*,.bmp,.ico,.webp,.avif,.gif,.png,.jpg,.jpeg,.svg" hidden />
+
+        <button id="loadSampleBtn" class="btn btn-ghost" title="Load 4 studio demo images">
+          ✨ Samples
+        </button>
+
+        <button id="copyClipboardBtn" class="btn btn-ghost" title="Copy edited image to system clipboard (Ctrl+C)">
+          📋 Copy
+        </button>
+
+        <button id="resetAllBtn" class="btn btn-ghost" title="Reset all adjustments to defaults">
+          ↺ Reset
+        </button>
+
+        <div class="divider-v"></div>
+
+        <button id="exportCurrentBtn" class="btn btn-primary">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          <span id="exportBtnLabel">Export Image</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <div class="workspace">
+      <!-- Left Filmstrip / Queue Drawer -->
+      <aside class="filmstrip-panel">
+        <div class="panel-header">
+          <span class="panel-title">Image Queue (<span id="filmstripCount">0</span>)</span>
+          <div class="filmstrip-actions">
+            <button id="clearQueueBtn" class="icon-btn-sm" title="Clear all images">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div id="filmstripList" class="filmstrip-list"></div>
+        <div class="filmstrip-footer">
+          <button id="addMoreFilmstripBtn" class="btn btn-outline btn-block">
+            + Drop, Browse, or Ctrl+V
+          </button>
+        </div>
+      </aside>
+
+      <!-- Center Viewport (Switches between Single Studio & Bulk Grid) -->
+      <main class="center-stage" id="dropZone">
+        <!-- Empty State Overlay -->
+        <div id="emptyState" class="empty-state">
+          <div class="empty-card">
+            <div class="empty-icon">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                <rect x="3" y="3" width="18" height="18" rx="3"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <path d="m21 15-5-5L5 21"/>
+              </svg>
+            </div>
+            <h2>Drop or Paste (`Ctrl+V`) images to start</h2>
+            <p>AI & Chroma background editor, color grading & LUTs, text/logo watermarking, sticker outlines & 3D floor reflections, interactive crop, privacy redaction, and multi-format bulk export.</p>
+            <div class="empty-actions">
+              <label for="fileInput" class="btn btn-primary btn-lg">
+                Browse Files
+              </label>
+              <button id="emptySampleBtn" class="btn btn-secondary btn-lg">
+                Try Demo Samples
+              </button>
+            </div>
+            <div class="supported-pills">
+              <span>PNG</span><span>JPG</span><span>WebP</span><span>AVIF</span><span>BMP</span><span>GIF</span><span>ICO</span><span>PDF</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- SINGLE STUDIO VIEW -->
+        <section id="singleView" class="single-view hidden">
+          <!-- Canvas Top Toolbar -->
+          <div class="canvas-toolbar">
+            <div class="toolbar-group">
+              <button id="compareToggleBtn" class="tool-chip" title="Toggle Before / After Split Slider">
+                ↔ Split Compare
+              </button>
+              <button id="holdOriginalBtn" class="tool-chip" title="Hold to view original image">
+                👁 Hold Original
+              </button>
+            </div>
+
+            <!-- Interactive Canvas Tools: Eyedropper, Erase/Restore, Redact Pixelate/Blur, Crop -->
+            <div class="toolbar-group" id="interactiveToolsBar">
+              <button id="eyedropperToolBtn" class="tool-chip" title="Click on canvas to sample background color to remove">
+                💧 Pick BG
+              </button>
+              <button id="brushEraseBtn" class="tool-chip" title="Manually erase background with brush">
+                🧹 Erase BG
+              </button>
+              <button id="brushRestoreBtn" class="tool-chip" title="Manually restore foreground with brush">
+                🖌 Restore FG
+              </button>
+              <button id="brushPixelateBtn" class="tool-chip" title="Privacy Redaction: Paint mosaic pixelation over faces, plates, or text">
+                ▦ Redact Mosaic
+              </button>
+              <button id="brushBlurRedactBtn" class="tool-chip" title="Privacy Redaction: Paint Gaussian blur over sensitive areas">
+                ◌ Redact Blur
+              </button>
+              <button id="cropBoxToolBtn" class="tool-chip" title="Interactive On-Canvas Crop Box">
+                Crop Box
+              </button>
+
+              <div id="brushSizeControl" class="brush-size-inline hidden">
+                <span>Size</span>
+                <input type="range" id="brushSizeSlider" min="8" max="120" value="38" />
+                <button id="clearBrushMaskBtn" class="btn-xs" title="Clear manual brush & redaction strokes">Clear</button>
+              </div>
+            </div>
+
+            <div class="toolbar-group">
+              <button id="zoomOutBtn" class="icon-btn-sm" title="Zoom Out">−</button>
+              <span id="zoomLevelText" class="mono-label">100%</span>
+              <button id="zoomInBtn" class="icon-btn-sm" title="Zoom In">+</button>
+              <button id="zoomFitBtn" class="tool-chip" title="Fit to screen">Fit</button>
+            </div>
+          </div>
+
+          <!-- Canvas Container -->
+          <div class="canvas-viewport" id="canvasViewport">
+            <div class="canvas-stage-wrapper" id="canvasStageWrapper">
+              <canvas id="previewCanvas" class="checkerboard"></canvas>
+              <canvas id="originalCanvas" class="original-overlay hidden"></canvas>
+
+              <!-- Interactive On-Canvas Crop Overlay -->
+              <div id="cropOverlay" class="crop-overlay hidden">
+                <div id="cropSelectionBox" class="crop-box">
+                  <div class="crop-grid-h"></div>
+                  <div class="crop-grid-v"></div>
+                  <div class="crop-handle nw" data-handle="nw"></div>
+                  <div class="crop-handle ne" data-handle="ne"></div>
+                  <div class="crop-handle sw" data-handle="sw"></div>
+                  <div class="crop-handle se" data-handle="se"></div>
+                </div>
+              </div>
+
+              <!-- Split Slider Handle -->
+              <div id="splitHandle" class="split-handle hidden">
+                <div class="split-line"></div>
+                <div class="split-knob">↔</div>
+              </div>
+
+              <!-- Brush Cursor Preview -->
+              <div id="brushCursor" class="brush-cursor hidden"></div>
+            </div>
+          </div>
+
+          <!-- Bottom Telemetry Bar -->
+          <div class="telemetry-bar">
+            <div class="telemetry-item">
+              <span class="telemetry-label">FILE</span>
+              <span id="teleFileName" class="telemetry-val">—</span>
+            </div>
+            <div class="telemetry-sep">→</div>
+            <div class="telemetry-item">
+              <span class="telemetry-label">DIMENSIONS</span>
+              <span id="teleDims" class="telemetry-val mono">—</span>
+            </div>
+            <div class="telemetry-sep">→</div>
+            <div class="telemetry-item">
+              <span class="telemetry-label">FILE SIZE</span>
+              <span id="teleSize" class="telemetry-val mono">—</span>
+              <span id="teleSavingsBadge" class="savings-badge hidden">0%</span>
+            </div>
+            <div class="telemetry-sep">→</div>
+            <div class="telemetry-item">
+              <span class="telemetry-label">FORMAT</span>
+              <span id="teleFormat" class="format-pill">PNG</span>
+            </div>
+            <div class="telemetry-sep">•</div>
+            <div class="telemetry-item">
+              <span id="teleExifBadge" class="status-chip active">EXIF Stripped</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- BULK BATCH STUDIO VIEW -->
+        <section id="bulkView" class="bulk-view hidden">
+          <div class="bulk-header-bar">
+            <div>
+              <h2>Bulk Batch Processor</h2>
+              <p>All background, color, watermark, dimension, and format settings apply across your entire batch.</p>
+            </div>
+            <div class="bulk-header-actions">
+              <button id="processAllBulkBtn" class="btn btn-secondary">
+                ↻ Refresh Previews
+              </button>
+              <button id="exportContactSheetBtn" class="btn btn-outline" title="Combine all batch images into a catalog grid contact sheet">
+                ⊞ Export Contact Sheet
+              </button>
+              <button id="downloadMergedPdfBtn" class="btn btn-outline" title="Combine all batch images into a multi-page PDF">
+                📄 Merged PDF
+              </button>
+              <button id="downloadAllZipBtn" class="btn btn-primary">
+                ⬇ Download All (.ZIP)
+              </button>
+            </div>
+          </div>
+
+          <!-- Bulk Summary Stats -->
+          <div class="bulk-stats-row">
+            <div class="stat-card">
+              <span class="stat-label">Total Images</span>
+              <span id="bulkStatCount" class="stat-value">0</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Original Total Size</span>
+              <span id="bulkStatOrigSize" class="stat-value mono">0 KB</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Estimated Output Size</span>
+              <span id="bulkStatOutSize" class="stat-value mono">0 KB</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Total Saved</span>
+              <span id="bulkStatSaved" class="stat-value mono text-emerald">0%</span>
+            </div>
+          </div>
+
+          <!-- Bulk Progress Bar -->
+          <div id="bulkProgressContainer" class="bulk-progress-container hidden">
+            <div class="bulk-progress-header">
+              <span id="bulkProgressLabel">Processing batch...</span>
+              <span id="bulkProgressPercent" class="mono">0%</span>
+            </div>
+            <div class="progress-track">
+              <div id="bulkProgressBar" class="progress-fill" style="width: 0%"></div>
+            </div>
+          </div>
+
+          <!-- Bulk Cards Grid -->
+          <div id="bulkGrid" class="bulk-grid"></div>
+        </section>
+      </main>
+
+      <!-- Right Inspector Sidebar (5 Feature Tabs) -->
+      <aside class="inspector-panel">
+        <div class="inspector-tabs" role="tablist">
+          <button class="insp-tab active" data-tab="tab-background" title="Background Removal, Replacement & Sticker Styling">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2a10 10 0 1 0 10 10H12V2z"/>
+            </svg>
+            <span>BG & Cutout</span>
+          </button>
+          <button class="insp-tab" data-tab="tab-enhance" title="Color Grading, Filters, LUTs & Sharpening">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2"/>
+            </svg>
+            <span>Enhance</span>
+          </button>
+          <button class="insp-tab" data-tab="tab-watermark" title="Text/Logo Watermarks, Badges & Frames">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/>
+            </svg>
+            <span>Watermark</span>
+          </button>
+          <button class="insp-tab" data-tab="tab-dimensions" title="Crop, Dimensions, Aspect Ratio & Straighten">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/>
+            </svg>
+            <span>Crop & Size</span>
+          </button>
+          <button class="insp-tab" data-tab="tab-format" title="Format, Target File Size, Privacy & Recipes">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+            </svg>
+            <span>Export & Pro</span>
+          </button>
+        </div>
+
+        <div class="inspector-body">
+          <!-- ==================== TAB 1: BACKGROUND & ADVANCED SUBJECT STYLING ==================== -->
+          <div id="tab-background" class="tab-pane active">
+            <!-- Section 1: Background Removal -->
+            <div class="control-group">
+              <div class="group-header">
+                <h3>1. Background Removal</h3>
+                <span class="status-chip" id="bgRemovalStatusChip">Off</span>
+              </div>
+
+              <div class="segmented-control" id="bgRemovalModeGroup">
+                <button class="seg-btn active" data-bg-mode="none">Original</button>
+                <button class="seg-btn" data-bg-mode="ai">AI Cutout</button>
+                <button class="seg-btn" data-bg-mode="color">Chroma Key</button>
+              </div>
+
+              <!-- AI Cutout Controls -->
+              <div id="aiRemovalControls" class="sub-panel hidden">
+                <div class="slider-row">
+                  <div class="slider-header">
+                    <label>Edge Sensitivity</label>
+                    <span id="aiSensitivityVal" class="mono">50%</span>
+                  </div>
+                  <input type="range" id="aiSensitivitySlider" min="10" max="95" value="50" />
+                </div>
+                <div class="slider-row">
+                  <div class="slider-header">
+                    <label>Edge Feather / Smoothness</label>
+                    <span id="aiFeatherVal" class="mono">2 px</span>
+                  </div>
+                  <input type="range" id="aiFeatherSlider" min="0" max="15" value="2" />
+                </div>
+                <button id="runAiCutoutBtn" class="btn btn-accent btn-block">
+                  ✨ Run AI Subject Isolation
+                </button>
+              </div>
+
+              <!-- Color / Chroma Key Controls -->
+              <div id="colorRemovalControls" class="sub-panel hidden">
+                <div class="field-row">
+                  <label>Target Color</label>
+                  <div class="color-picker-wrap">
+                    <input type="color" id="chromaColorInput" value="#ffffff" />
+                    <button id="pickFromCanvasBtn" class="btn btn-xs btn-secondary">
+                      💧 Eyedropper
+                    </button>
+                  </div>
+                </div>
+                <div class="quick-swatches">
+                  <button class="swatch-btn" data-chroma="#ffffff" style="background:#ffffff" title="White"></button>
+                  <button class="swatch-btn" data-chroma="#000000" style="background:#000000" title="Black"></button>
+                  <button class="swatch-btn" data-chroma="#00e640" style="background:#00e640" title="Green Screen"></button>
+                  <button class="swatch-btn" data-chroma="#0000ff" style="background:#0000ff" title="Blue Screen"></button>
+                  <button class="swatch-btn" data-chroma="#f3f4f6" style="background:#f3f4f6" title="Light Gray Studio"></button>
+                </div>
+
+                <div class="slider-row">
+                  <div class="slider-header">
+                    <label>Color Tolerance</label>
+                    <span id="chromaToleranceVal" class="mono">22%</span>
+                  </div>
+                  <input type="range" id="chromaToleranceSlider" min="1" max="90" value="22" />
+                </div>
+
+                <div class="slider-row">
+                  <div class="slider-header">
+                    <label>Edge Softness / Feather</label>
+                    <span id="chromaFeatherVal" class="mono">12%</span>
+                  </div>
+                  <input type="range" id="chromaFeatherSlider" min="0" max="50" value="12" />
+                </div>
+
+                <label class="checkbox-row">
+                  <input type="checkbox" id="chromaContiguousCheck" />
+                  <span>Outer border flood-fill only</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Section 2: Background Replacement -->
+            <div class="control-group">
+              <div class="group-header">
+                <h3>2. Background Replacement</h3>
+              </div>
+
+              <div class="segmented-control" id="bgFillTypeGroup">
+                <button class="seg-btn active" data-fill-type="transparent">Alpha</button>
+                <button class="seg-btn" data-fill-type="color">Solid</button>
+                <button class="seg-btn" data-fill-type="gradient">Grad</button>
+                <button class="seg-btn" data-fill-type="blur">Bokeh</button>
+                <button class="seg-btn" data-fill-type="image">Image</button>
+              </div>
+
+              <div id="fillColorControls" class="sub-panel hidden">
+                <div class="field-row">
+                  <label>Background Color</label>
+                  <input type="color" id="bgSolidColorInput" value="#ffffff" />
+                </div>
+                <div class="quick-swatches">
+                  <button class="swatch-btn" data-bg-solid="#ffffff" style="background:#ffffff"></button>
+                  <button class="swatch-btn" data-bg-solid="#f8fafc" style="background:#f8fafc"></button>
+                  <button class="swatch-btn" data-bg-solid="#0f172a" style="background:#0f172a"></button>
+                  <button class="swatch-btn" data-bg-solid="#000000" style="background:#000000"></button>
+                  <button class="swatch-btn" data-bg-solid="#fef3c7" style="background:#fef3c7"></button>
+                  <button class="swatch-btn" data-bg-solid="#dbeafe" style="background:#dbeafe"></button>
+                  <button class="swatch-btn" data-bg-solid="#dcfce7" style="background:#dcfce7"></button>
+                  <button class="swatch-btn" data-bg-solid="#fce7f3" style="background:#fce7f3"></button>
+                </div>
+              </div>
+
+              <div id="fillGradientControls" class="sub-panel hidden">
+                <div class="field-row">
+                  <label>Start</label>
+                  <input type="color" id="bgGradColor1" value="#6366f1" />
+                  <label>End</label>
+                  <input type="color" id="bgGradColor2" value="#ec4899" />
+                </div>
+                <div class="slider-row">
+                  <div class="slider-header">
+                    <label>Gradient Angle</label>
+                    <span id="bgGradAngleVal" class="mono">135°</span>
+                  </div>
+                  <input type="range" id="bgGradAngleSlider" min="0" max="360" value="135" />
+                </div>
+                <div class="quick-swatches">
+                  <button class="swatch-btn" data-grad1="#6366f1" data-grad2="#ec4899" style="background:linear-gradient(135deg,#6366f1,#ec4899)"></button>
+                  <button class="swatch-btn" data-grad1="#06b6d4" data-grad2="#3b82f6" style="background:linear-gradient(135deg,#06b6d4,#3b82f6)"></button>
+                  <button class="swatch-btn" data-grad1="#f59e0b" data-grad2="#ef4444" style="background:linear-gradient(135deg,#f59e0b,#ef4444)"></button>
+                  <button class="swatch-btn" data-grad1="#10b981" data-grad2="#047857" style="background:linear-gradient(135deg,#10b981,#047857)"></button>
+                  <button class="swatch-btn" data-grad1="#1e293b" data-grad2="#0f172a" style="background:linear-gradient(135deg,#1e293b,#0f172a)"></button>
+                  <button class="swatch-btn" data-grad1="#fdfcfb" data-grad2="#e2d1c3" style="background:linear-gradient(135deg,#fdfcfb,#e2d1c3)"></button>
+                </div>
+              </div>
+
+              <div id="fillBlurControls" class="sub-panel hidden">
+                <div class="slider-row">
+                  <div class="slider-header">
+                    <label>Blur Intensity (Bokeh)</label>
+                    <span id="bgBlurAmountVal" class="mono">16 px</span>
+                  </div>
+                  <input type="range" id="bgBlurAmountSlider" min="1" max="50" value="16" />
+                </div>
+                <div class="slider-row">
+                  <div class="slider-header">
+                    <label>Background Brightness</label>
+                    <span id="bgBlurBrightVal" class="mono">100%</span>
+                  </div>
+                  <input type="range" id="bgBlurBrightSlider" min="30" max="150" value="100" />
+                </div>
+              </div>
+
+              <div id="fillImageControls" class="sub-panel hidden">
+                <label for="bgCustomImageInput" class="btn btn-secondary btn-block">
+                  Upload Background Image
+                </label>
+                <input type="file" id="bgCustomImageInput" accept="image/*" hidden />
+                <span id="bgCustomImageName" class="help-text">No custom background selected</span>
+              </div>
+            </div>
+
+            <!-- Section 3: Advanced Subject & Cutout Styling (Sticker Outline, Autocrop, 3D Reflection) -->
+            <div class="control-group">
+              <div class="group-header">
+                <h3>3. Subject & Studio Effects</h3>
+              </div>
+
+              <label class="checkbox-row">
+                <input type="checkbox" id="autoTrimCheck" />
+                <span><strong>Auto-Trim Transparent Margins</strong> (Smart Autocrop)</span>
+              </label>
+
+              <div class="slider-row">
+                <div class="slider-header">
+                  <label>Sticker Outline / Stroke</label>
+                  <span id="strokeWidthVal" class="mono">0 px</span>
+                </div>
+                <div class="field-row">
+                  <input type="range" id="strokeWidthSlider" min="0" max="24" value="0" style="flex:1" />
+                  <input type="color" id="strokeColorInput" value="#ffffff" title="Sticker Outline Color" />
+                </div>
+              </div>
+
+              <div class="sub-panel">
+                <label class="checkbox-row">
+                  <input type="checkbox" id="contactShadowCheck" />
+                  <span><strong>Ground Contact Shadow</strong> (Under product)</span>
+                </label>
+                <label class="checkbox-row">
+                  <input type="checkbox" id="floorReflectionCheck" />
+                  <span><strong>3D Mirror Floor Reflection</strong></span>
+                </label>
+                <div id="reflectionOpacityRow" class="slider-row hidden">
+                  <div class="slider-header">
+                    <label>Reflection Intensity</label>
+                    <span id="reflectionOpacityVal" class="mono">35%</span>
+                  </div>
+                  <input type="range" id="reflectionOpacitySlider" min="5" max="85" value="35" />
+                </div>
+              </div>
+
+              <div class="slider-row">
+                <div class="slider-header">
+                  <label>Canvas Padding (Margin)</label>
+                  <span id="bgPaddingVal" class="mono">0%</span>
+                </div>
+                <input type="range" id="bgPaddingSlider" min="0" max="35" value="0" />
+              </div>
+
+              <div class="slider-row">
+                <div class="slider-header">
+                  <label>Subject Drop Shadow</label>
+                  <span id="bgShadowVal" class="mono">0 px</span>
+                </div>
+                <input type="range" id="bgShadowSlider" min="0" max="40" value="0" />
+              </div>
+
+              <div class="slider-row">
+                <div class="slider-header">
+                  <label>Corner Radius</label>
+                  <span id="bgRadiusVal" class="mono">0 px</span>
+                </div>
+                <input type="range" id="bgRadiusSlider" min="0" max="100" value="0" />
+              </div>
+            </div>
+          </div>
+
+          <!-- ==================== TAB 2: COLOR GRADING, FILTERS & ENHANCEMENT ==================== -->
+          <div id="tab-enhance" class="tab-pane">
+            <div class="control-group">
+              <div class="group-header">
+                <h3>One-Click Enhancement & LUTs</h3>
+                <button id="resetEnhanceBtn" class="btn-xs">Reset</button>
+              </div>
+              <button id="autoEnhanceBtn" class="btn btn-accent btn-block">
+                ⚡ Auto-Enhance Light & Pop
+              </button>
+
+              <div class="preset-grid" id="filterPresetGrid" style="margin-top:6px">
+                <button class="preset-card active" data-filter="none">
+                  <strong>Normal</strong>
+                  <span>Unfiltered</span>
+                </button>
+                <button class="preset-card" data-filter="ecommerce">
+                  <strong>E-Commerce</strong>
+                  <span>Crisp & Bright</span>
+                </button>
+                <button class="preset-card" data-filter="bw">
+                  <strong>Monochrome</strong>
+                  <span>Studio B&W</span>
+                </button>
+                <button class="preset-card" data-filter="vintage">
+                  <strong>Warm Vintage</strong>
+                  <span>Golden Film</span>
+                </button>
+                <button class="preset-card" data-filter="cinematic">
+                  <strong>Cinematic</strong>
+                  <span>Teal & Orange</span>
+                </button>
+                <button class="preset-card" data-filter="matte">
+                  <strong>Soft Matte</strong>
+                  <span>Faded Lifted Blacks</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="control-group">
+              <div class="group-header">
+                <h3>Light & Color Adjustments</h3>
+              </div>
+
+              <div class="slider-row">
+                <div class="slider-header"><label>Brightness</label><span id="adjBrightVal" class="mono">0</span></div>
+                <input type="range" id="adjBrightSlider" min="-100" max="100" value="0" />
+              </div>
+              <div class="slider-row">
+                <div class="slider-header"><label>Contrast</label><span id="adjContrastVal" class="mono">0</span></div>
+                <input type="range" id="adjContrastSlider" min="-100" max="100" value="0" />
+              </div>
+              <div class="slider-row">
+                <div class="slider-header"><label>Exposure</label><span id="adjExposureVal" class="mono">0</span></div>
+                <input type="range" id="adjExposureSlider" min="-100" max="100" value="0" />
+              </div>
+              <div class="slider-row">
+                <div class="slider-header"><label>Saturation</label><span id="adjSatVal" class="mono">0</span></div>
+                <input type="range" id="adjSatSlider" min="-100" max="100" value="0" />
+              </div>
+              <div class="slider-row">
+                <div class="slider-header"><label>Vibrance</label><span id="adjVibVal" class="mono">0</span></div>
+                <input type="range" id="adjVibSlider" min="-100" max="100" value="0" />
+              </div>
+              <div class="slider-row">
+                <div class="slider-header"><label>Highlights</label><span id="adjHighVal" class="mono">0</span></div>
+                <input type="range" id="adjHighSlider" min="-100" max="100" value="0" />
+              </div>
+              <div class="slider-row">
+                <div class="slider-header"><label>Shadows</label><span id="adjShadVal" class="mono">0</span></div>
+                <input type="range" id="adjShadSlider" min="-100" max="100" value="0" />
+              </div>
+              <div class="slider-row">
+                <div class="slider-header"><label>Warmth / Temp</label><span id="adjWarmthVal" class="mono">0</span></div>
+                <input type="range" id="adjWarmthSlider" min="-100" max="100" value="0" />
+              </div>
+              <div class="slider-row">
+                <div class="slider-header"><label>Sharpening (Clarity)</label><span id="adjSharpVal" class="mono">0%</span></div>
+                <input type="range" id="adjSharpSlider" min="0" max="100" value="0" />
+              </div>
+            </div>
+          </div>
+
+          <!-- ==================== TAB 3: WATERMARK, TEXT, BADGES & FRAMES ==================== -->
+          <div id="tab-watermark" class="tab-pane">
+            <!-- Text Watermark -->
+            <div class="control-group">
+              <div class="group-header">
+                <h3>Text Watermark</h3>
+                <input type="checkbox" id="wmTextEnableCheck" />
+              </div>
+              <div class="field-col">
+                <label>Watermark Text (Supports `{name}`, `{date}`, `{dims}`)</label>
+                <input type="text" id="wmTextInput" class="text-input" value="© Orion Studio" placeholder="© Brand Name or {name}" />
+              </div>
+              <div class="field-row">
+                <label>Text Color</label>
+                <input type="color" id="wmTextColorInput" value="#ffffff" />
+                <label>Size</label>
+                <input type="number" id="wmTextSizeInput" min="10" max="250" value="36" style="width:70px" />
+              </div>
+              <div class="slider-row">
+                <div class="slider-header"><label>Opacity</label><span id="wmOpacityVal" class="mono">75%</span></div>
+                <input type="range" id="wmOpacitySlider" min="5" max="100" value="75" />
+              </div>
+              <div class="slider-row">
+                <div class="slider-header"><label>Rotation Angle</label><span id="wmAngleVal" class="mono">0°</span></div>
+                <input type="range" id="wmAngleSlider" min="-45" max="45" value="0" />
+              </div>
+            </div>
+
+            <!-- Logo Image Watermark -->
+            <div class="control-group">
+              <div class="group-header">
+                <h3>Logo Image Watermark</h3>
+                <button id="clearWmLogoBtn" class="btn-xs">Clear</button>
+              </div>
+              <label for="wmLogoFileInput" class="btn btn-secondary btn-block">
+                Upload PNG / Logo Watermark
+              </label>
+              <input type="file" id="wmLogoFileInput" accept="image/*" hidden />
+              <div class="slider-row">
+                <div class="slider-header"><label>Logo Scale</label><span id="wmLogoScaleVal" class="mono">18%</span></div>
+                <input type="range" id="wmLogoScaleSlider" min="5" max="60" value="18" />
+              </div>
+            </div>
+
+            <!-- Position & Tiling -->
+            <div class="control-group">
+              <div class="group-header">
+                <h3>Watermark Placement</h3>
+              </div>
+              <label class="checkbox-row">
+                <input type="checkbox" id="wmTileCheck" />
+                <span><strong>Tiled Diagonal Repeat</strong> (Full image protection)</span>
+              </label>
+              <div class="anchor-row">
+                <span class="help-text">3×3 Position Anchor:</span>
+                <div class="anchor-grid" id="wmAnchorGrid">
+                  <button class="anchor-cell" data-anchor="nw">↖</button>
+                  <button class="anchor-cell" data-anchor="n">↑</button>
+                  <button class="anchor-cell" data-anchor="ne">↗</button>
+                  <button class="anchor-cell" data-anchor="w">←</button>
+                  <button class="anchor-cell" data-anchor="c">•</button>
+                  <button class="anchor-cell" data-anchor="e">→</button>
+                  <button class="anchor-cell" data-anchor="sw">↙</button>
+                  <button class="anchor-cell" data-anchor="s">↓</button>
+                  <button class="anchor-cell active" data-anchor="se">↘</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Corner Ribbon Badge & Border Frame -->
+            <div class="control-group">
+              <div class="group-header">
+                <h3>Corner Badge & Border Frame</h3>
+              </div>
+              <div class="field-row">
+                <label>Corner Ribbon</label>
+                <input type="text" id="badgeTextInput" class="text-input" placeholder="Off (e.g. SALE, NEW)" style="width:130px" />
+                <input type="color" id="badgeColorInput" value="#ef4444" />
+              </div>
+              <div class="preset-chips">
+                <button class="chip-btn" data-badge="">Off</button>
+                <button class="chip-btn" data-badge="NEW">NEW</button>
+                <button class="chip-btn" data-badge="SALE">SALE</button>
+                <button class="chip-btn" data-badge="FEATURED">FEATURED</button>
+                <button class="chip-btn" data-badge="PRO">PRO</button>
+              </div>
+              <div class="slider-row" style="margin-top:6px">
+                <div class="slider-header"><label>Solid Border Frame</label><span id="borderFrameVal" class="mono">0 px</span></div>
+                <div class="field-row">
+                  <input type="range" id="borderFrameSlider" min="0" max="40" value="0" style="flex:1" />
+                  <input type="color" id="borderFrameColorInput" value="#ffffff" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ==================== TAB 4: INTERACTIVE CROP & DIMENSIONS ==================== -->
+          <div id="tab-dimensions" class="tab-pane">
+            <!-- Interactive On-Canvas Crop -->
+            <div class="control-group">
+              <div class="group-header">
+                <h3>Interactive Canvas Crop</h3>
+              </div>
+              <div class="field-row">
+                <button id="toggleCropBoxBtn" class="btn btn-secondary" style="flex:1">
+                  Crop Box Overlay
+                </button>
+                <button id="applyCropBtn" class="btn btn-primary hidden">
+                  ✓ Apply
+                </button>
+                <button id="resetCropBtn" class="btn btn-outline" title="Restore uncropped image">
+                  Reset Crop
+                </button>
+              </div>
+              <div class="preset-chips" id="cropRatioChips">
+                <button class="chip-btn active" data-crop-ratio="free">Free</button>
+                <button class="chip-btn" data-crop-ratio="1:1">1:1</button>
+                <button class="chip-btn" data-crop-ratio="4:5">4:5</button>
+                <button class="chip-btn" data-crop-ratio="4:3">4:3</button>
+                <button class="chip-btn" data-crop-ratio="16:9">16:9</button>
+                <button class="chip-btn" data-crop-ratio="9:16">9:16</button>
+              </div>
+            </div>
+
+            <!-- Resize Mode -->
+            <div class="control-group">
+              <div class="group-header">
+                <h3>Output Dimensions</h3>
+              </div>
+
+              <div class="segmented-control" id="resizeModeGroup">
+                <button class="seg-btn active" data-resize-mode="original">Original</button>
+                <button class="seg-btn" data-resize-mode="pixels">Exact px</button>
+                <button class="seg-btn" data-resize-mode="percent">Scale %</button>
+                <button class="seg-btn" data-resize-mode="max">Fit Box</button>
+              </div>
+
+              <div id="resizePixelsControls" class="sub-panel hidden">
+                <div class="dim-inputs-grid">
+                  <div class="dim-field">
+                    <label>Width (px)</label>
+                    <input type="number" id="resizeWidthInput" min="1" max="16000" value="1080" />
+                  </div>
+                  <button id="lockAspectBtn" class="lock-btn active" title="Lock Aspect Ratio">
+                    🔒
+                  </button>
+                  <div class="dim-field">
+                    <label>Height (px)</label>
+                    <input type="number" id="resizeHeightInput" min="1" max="16000" value="1080" />
+                  </div>
+                </div>
+
+                <div class="field-row" style="margin-top:8px">
+                  <label>Fit Method</label>
+                  <select id="resizeFitSelect" class="select-input">
+                    <option value="contain">Contain (Pad with Background)</option>
+                    <option value="cover">Cover (Smart Anchor Crop)</option>
+                    <option value="stretch">Stretch to Fill</option>
+                  </select>
+                </div>
+
+                <!-- 9-Point Anchor Selector for Bulk Cover Crop -->
+                <div class="anchor-row" style="margin-top:6px">
+                  <span class="help-text">Cover Crop Anchor:</span>
+                  <div class="anchor-grid" id="coverAnchorGrid">
+                    <button class="anchor-cell" data-cover-anchor="nw">↖</button>
+                    <button class="anchor-cell" data-cover-anchor="n">↑</button>
+                    <button class="anchor-cell" data-cover-anchor="ne">↗</button>
+                    <button class="anchor-cell" data-cover-anchor="w">←</button>
+                    <button class="anchor-cell active" data-cover-anchor="c">•</button>
+                    <button class="anchor-cell" data-cover-anchor="e">→</button>
+                    <button class="anchor-cell" data-cover-anchor="sw">↙</button>
+                    <button class="anchor-cell" data-cover-anchor="s">↓</button>
+                    <button class="anchor-cell" data-cover-anchor="se">↘</button>
+                  </div>
+                </div>
+              </div>
+
+              <div id="resizePercentControls" class="sub-panel hidden">
+                <div class="slider-row">
+                  <div class="slider-header">
+                    <label>Scale Factor</label>
+                    <span id="resizePercentVal" class="mono">100%</span>
+                  </div>
+                  <input type="range" id="resizePercentSlider" min="5" max="200" value="100" />
+                </div>
+                <div class="preset-chips">
+                  <button class="chip-btn" data-scale-preset="25">25%</button>
+                  <button class="chip-btn" data-scale-preset="50">50%</button>
+                  <button class="chip-btn" data-scale-preset="75">75%</button>
+                  <button class="chip-btn" data-scale-preset="100">100%</button>
+                  <button class="chip-btn" data-scale-preset="150">150%</button>
+                  <button class="chip-btn" data-scale-preset="200">200%</button>
+                </div>
+              </div>
+
+              <div id="resizeMaxControls" class="sub-panel hidden">
+                <div class="field-row">
+                  <label>Max Longest Side (px)</label>
+                  <input type="number" id="resizeMaxSideInput" min="16" max="16000" value="1200" />
+                </div>
+              </div>
+            </div>
+
+            <!-- Orientation & Fine Straighten -->
+            <div class="control-group">
+              <div class="group-header">
+                <h3>Rotate, Flip & Straighten</h3>
+              </div>
+              <div class="transform-row">
+                <button id="rotLeftBtn" class="btn btn-secondary">↺ 90°</button>
+                <button id="rotRightBtn" class="btn btn-secondary">↻ 90°</button>
+                <button id="flipHBtn" class="btn btn-secondary">⇆ Flip H</button>
+                <button id="flipVBtn" class="btn btn-secondary">⇅ Flip V</button>
+              </div>
+              <div class="slider-row" style="margin-top:6px">
+                <div class="slider-header">
+                  <label>Fine Straighten Horizon</label>
+                  <span id="straightenVal" class="mono">0°</span>
+                </div>
+                <input type="range" id="straightenSlider" min="-45" max="45" step="0.5" value="0" />
+              </div>
+            </div>
+
+            <!-- Quick Dimension Presets -->
+            <div class="control-group">
+              <div class="group-header">
+                <h3>Dimension Presets</h3>
+              </div>
+              <div class="preset-grid">
+                <button class="preset-card" data-w="1080" data-h="1080">
+                  <strong>1:1 Square</strong><span>1080 × 1080</span>
+                </button>
+                <button class="preset-card" data-w="1080" data-h="1350">
+                  <strong>4:5 Portrait</strong><span>1080 × 1350</span>
+                </button>
+                <button class="preset-card" data-w="1920" data-h="1080">
+                  <strong>16:9 Full HD</strong><span>1920 × 1080</span>
+                </button>
+                <button class="preset-card" data-w="1080" data-h="1920">
+                  <strong>9:16 Story</strong><span>1080 × 1920</span>
+                </button>
+                <button class="preset-card" data-w="2000" data-h="2000">
+                  <strong>Shopify / Amazon</strong><span>2000 × 2000</span>
+                </button>
+                <button class="preset-card" data-w="1200" data-h="630">
+                  <strong>Social OpenGraph</strong><span>1200 × 630</span>
+                </button>
+                <button class="preset-card" data-w="512" data-h="512">
+                  <strong>App Icon</strong><span>512 × 512</span>
+                </button>
+                <button class="preset-card" data-w="256" data-h="256">
+                  <strong>Avatar / ICO</strong><span>256 × 256</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- ==================== TAB 5: EXPORT, FORMAT, PRIVACY & RECIPES ==================== -->
+          <div id="tab-format" class="tab-pane">
+            <!-- Saved Preset Recipes -->
+            <div class="control-group">
+              <div class="group-header">
+                <h3>Preset Recipes</h3>
+              </div>
+              <div class="field-row">
+                <select id="recipeSelect" class="select-input" style="flex:1">
+                  <option value="">— Load a Preset Recipe —</option>
+                  <option value="shopify">Shopify White 2000×2000 WebP ≤150KB</option>
+                  <option value="sticker">YouTube Sticker Cutout + White Outline</option>
+                  <option value="avatar">Bokeh Portrait 512×512 PNG</option>
+                  <option value="watermarked">Protected Proof JPG + Tiled Watermark</option>
+                </select>
+                <button id="saveRecipeBtn" class="btn btn-xs btn-secondary" title="Save current settings as a custom recipe">
+                  + Save
+                </button>
+              </div>
+            </div>
+
+            <!-- Target Format Selector -->
+            <div class="control-group">
+              <div class="group-header">
+                <h3>Convert File Format</h3>
+              </div>
+              <div class="format-grid" id="formatSelectorGrid">
+                <button class="format-option active" data-format="png">
+                  <strong>PNG</strong><span>Lossless / Alpha</span>
+                </button>
+                <button class="format-option" data-format="jpeg">
+                  <strong>JPG</strong><span>Smallest Photo</span>
+                </button>
+                <button class="format-option" data-format="webp">
+                  <strong>WebP</strong><span>Modern + Alpha</span>
+                </button>
+                <button class="format-option" data-format="avif">
+                  <strong>AVIF</strong><span>Next-Gen</span>
+                </button>
+                <button class="format-option" data-format="bmp">
+                  <strong>BMP</strong><span>32-bit Bitmap</span>
+                </button>
+                <button class="format-option" data-format="gif">
+                  <strong>GIF</strong><span>256-Color LZW</span>
+                </button>
+                <button class="format-option" data-format="ico">
+                  <strong>ICO</strong><span>Windows Icon</span>
+                </button>
+                <button class="format-option" data-format="pdf">
+                  <strong>PDF</strong><span>Document</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- File Size & Compression Control -->
+            <div class="control-group">
+              <div class="group-header">
+                <h3>File Size & Target KB Limit</h3>
+              </div>
+
+              <div class="slider-row" id="qualitySliderRow">
+                <div class="slider-header">
+                  <label>Compression Quality</label>
+                  <span id="qualityVal" class="mono">88%</span>
+                </div>
+                <input type="range" id="qualitySlider" min="5" max="100" value="88" />
+              </div>
+
+              <div class="sub-panel">
+                <label class="checkbox-row">
+                  <input type="checkbox" id="enableTargetSizeCheck" />
+                  <span><strong>Enforce Max File Size Limit</strong></span>
+                </label>
+
+                <div id="targetSizeControls" class="hidden" style="margin-top: 8px;">
+                  <div class="field-row">
+                    <label>Max File Size (KB)</label>
+                    <input type="number" id="targetSizeKbInput" min="5" max="50000" value="150" style="width: 95px;" />
+                  </div>
+                  <div class="preset-chips" style="margin-top:6px">
+                    <button class="chip-btn" data-kb-preset="50">≤ 50 KB</button>
+                    <button class="chip-btn" data-kb-preset="100">≤ 100 KB</button>
+                    <button class="chip-btn" data-kb-preset="250">≤ 250 KB</button>
+                    <button class="chip-btn" data-kb-preset="500">≤ 500 KB</button>
+                    <button class="chip-btn" data-kb-preset="1024">≤ 1 MB</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Privacy & EXIF Metadata Inspector -->
+            <div class="control-group">
+              <div class="group-header">
+                <h3>Privacy, EXIF & Redaction</h3>
+              </div>
+              <div id="exifInfoBox" class="exif-box mono">
+                Select an image to inspect metadata.
+              </div>
+              <label class="checkbox-row">
+                <input type="checkbox" id="stripExifCheck" checked />
+                <span><strong>Strip All EXIF / GPS / Camera Metadata</strong></span>
+              </label>
+            </div>
+
+            <!-- Power Export Packs -->
+            <div class="control-group">
+              <div class="group-header">
+                <h3>Power Export Packs</h3>
+              </div>
+              <div class="field-col">
+                <label>Output Filename Pattern</label>
+                <select id="filenamePatternSelect" class="select-input">
+                  <option value="{name}-edited">{name}-edited.{ext}</option>
+                  <option value="{name}">{name}.{ext}</option>
+                  <option value="{name}_{width}x{height}">{name}_{width}x{height}.{ext}</option>
+                  <option value="orion_{index}_{name}">orion_{index}_{name}.{ext}</option>
+                </select>
+              </div>
+              <button id="exportResponsivePackBtn" class="btn btn-secondary btn-block" title="Exports @1x, @2x, 400px Thumbnail, and Multi-Resolution Favicon .ICO (16-256px) in a ZIP">
+                📦 Export Responsive + Favicon Pack (.ZIP)
+              </button>
+              <button id="exportSheetFromSingleBtn" class="btn btn-outline btn-block" title="Generate a Contact Sheet grid image of all images in queue">
+                ⊞ Generate Contact Sheet Grid
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Inspector Sticky Bottom Action -->
+        <div class="inspector-footer">
+          <div class="live-output-summary">
+            <div>
+              <span class="summary-label">Estimated Output</span>
+              <strong id="footerEstSize" class="mono">—</strong>
+            </div>
+            <div>
+              <span class="summary-label">Target Dimensions</span>
+              <strong id="footerEstDims" class="mono">—</strong>
+            </div>
+          </div>
+          <button id="inspectorExportBtn" class="btn btn-primary btn-block btn-lg">
+            Export Current Image
+          </button>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="encoders.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
