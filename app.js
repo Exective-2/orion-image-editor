@@ -1291,23 +1291,23 @@
       labB[i] = lab[2];
     }
 
-    // 2. Sample 4 corners + top/left/right borders + outer 18% of bottom border
-    // (Excludes bottom-center 18..82% where standing subjects/portraits touch the bottom edge)
+    // 2. Safe Background Sampling: Sample 4 outer corners + upper side borders
+    // (Never sample top-center 25..75% where hair/head touches, and never sample bottom where torso/shoulders touch!)
     const samples = [];
     const stepX = Math.max(1, Math.floor(w / 48));
     const stepY = Math.max(1, Math.floor(h / 48));
     const marginX = Math.max(1, Math.min(5, Math.floor(w * 0.012)));
     const marginY = Math.max(1, Math.min(5, Math.floor(h * 0.012)));
 
+    // Outer top corners (x < 25% or x > 75%)
     for (let x = 0; x < w; x += stepX) {
-      const idxTop = marginY * w + x;
-      samples.push({ l: labL[idxTop], a: labA[idxTop], b: labB[idxTop], side: 0 });
-      if (x < w * 0.18 || x > w * 0.82) {
-        const idxBot = (h - 1 - marginY) * w + x;
-        samples.push({ l: labL[idxBot], a: labA[idxBot], b: labB[idxBot], side: 1 });
+      if (x < w * 0.25 || x > w * 0.75) {
+        const idxTop = marginY * w + x;
+        samples.push({ l: labL[idxTop], a: labA[idxTop], b: labB[idxTop], side: 0 });
       }
     }
-    for (let y = 0; y < h; y += stepY) {
+    // Upper 55% of left and right borders
+    for (let y = 0; y < Math.floor(h * 0.55); y += stepY) {
       const idxLeft = y * w + marginX;
       const idxRight = y * w + (w - 1 - marginX);
       samples.push({ l: labL[idxLeft], a: labA[idxLeft], b: labB[idxLeft], side: 2 });
@@ -1338,10 +1338,10 @@
 
     clusters.sort((a, b) => b.count - a.count);
     let bgCentroids = clusters
-      .filter((c) => c.sides.size >= 2 || c.count >= samples.length * 0.16)
-      .slice(0, 6);
+      .filter((c) => c.count >= samples.length * 0.18)
+      .slice(0, 4);
     if (bgCentroids.length === 0 && clusters.length > 0) {
-      bgCentroids = clusters.slice(0, Math.min(3, clusters.length));
+      bgCentroids = [clusters[0]];
     }
 
     // Precompute minimum perceptual LAB distance and Chromaticity (a,b) distance to verified background clusters
@@ -1375,26 +1375,26 @@
     let head = 0, tail = 0;
     let bgCount = 0;
 
-    function trySeed(x, y, strictBottomCenter) {
-      const idx = y * w + x;
-      if (!bgMask[idx]) {
-        const tol = strictBottomCenter ? colorTol * 0.85 : colorTol * 1.25;
-        if (minD[idx] <= tol) {
+    // Seed ONLY from verified outer corners and upper side borders
+    for (let x = 0; x < w; x++) {
+      if (x < w * 0.25 || x > w * 0.75) {
+        const idx = x;
+        if (!bgMask[idx] && minD[idx] <= colorTol * 1.25) {
           bgMask[idx] = 1;
           bgCount++;
           queue[tail++] = idx;
         }
       }
     }
-
-    for (let x = 0; x < w; x++) {
-      trySeed(x, 0, false);
-      const isBottomCenter = x > w * 0.18 && x < w * 0.82;
-      trySeed(x, h - 1, isBottomCenter);
-    }
-    for (let y = 0; y < h; y++) {
-      trySeed(0, y, false);
-      trySeed(w - 1, y, false);
+    for (let y = 0; y < Math.floor(h * 0.55); y++) {
+      const idxL = y * w;
+      const idxR = y * w + (w - 1);
+      if (!bgMask[idxL] && minD[idxL] <= colorTol * 1.25) {
+        bgMask[idxL] = 1; bgCount++; queue[tail++] = idxL;
+      }
+      if (!bgMask[idxR] && minD[idxR] <= colorTol * 1.25) {
+        bgMask[idxR] = 1; bgCount++; queue[tail++] = idxR;
+      }
     }
 
     // Stage A: Flood-fill using direct neighbor step |RGB(nIdx) - RGB(idx)|
